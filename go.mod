@@ -1,4 +1,4 @@
-module migrate-masp-events
+module github.com/heliaxdev/migrate-masp-events
 
 go 1.24.0
 
