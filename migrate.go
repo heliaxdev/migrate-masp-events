@@ -129,6 +129,12 @@ func migrateEvents(db *leveldb.DB, maspIndexerUrl string) error {
 
 			dirty = dirty || len(txIndices) > 0
 
+			// TODO:
+			// - need to open leveldb db that contains block responses (with tx data)
+			// - check what kind of tx there is at the given block index and height
+			// 		- if it is an ibc shielding, compute the data section hash
+			// 		- if it is a regular transfer tx, compute the masp tx id
+			// - will probably need to call rust code :((((((
 			for i := 0; i < len(txIndices); i++ {
 				abciResponses.EndBlock.Events = append(
 					abciResponses.EndBlock.Events,
