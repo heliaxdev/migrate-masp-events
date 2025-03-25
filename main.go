@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
@@ -28,21 +26,6 @@ func main() {
 
 	migrateEvents(db)
 	printEndBlocks(db)
-}
-
-func printEndBlocks(db *leveldb.DB) {
-	iter := db.NewIterator(util.BytesPrefix([]byte("abciResponsesKey:")), &opt.ReadOptions{})
-	defer iter.Release()
-
-	for iter.Next() {
-		abciResponses := new(cmtstate.ABCIResponses)
-		err := abciResponses.Unmarshal(iter.Value())
-		if err != nil {
-			panic(err)
-		}
-		fmt.Printf("Key = %q\n", string(iter.Key()))
-		fmt.Printf("Value = %#v\n", abciResponses.EndBlock)
-	}
 }
 
 func migrateEvents(db *leveldb.DB) {
