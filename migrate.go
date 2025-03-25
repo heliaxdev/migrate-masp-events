@@ -129,12 +129,6 @@ func migrateEvents(db *leveldb.DB, maspIndexerUrl string) error {
 
 			dirty = dirty || len(maspTxs) > 0
 
-			// TODO:
-			// - need to open leveldb db that contains block responses (with tx data)
-			// - check what kind of tx there is at the given block index and height
-			// 		- if it is an ibc shielding, compute the data section hash
-			// 		- if it is a regular transfer tx, compute the masp tx id
-			// - will probably need to call rust code :((((((
 			for i := 0; i < len(maspTxs); i++ {
 				for j := 0; j < len(maspTxs[i].Batch); j++ {
 					abciResponses.EndBlock.Events = append(
@@ -157,6 +151,23 @@ func migrateEvents(db *leveldb.DB, maspIndexerUrl string) error {
 									),
 									Index: true,
 								},
+								// TODO:
+								// - need to open leveldb db that contains block responses (with tx data)
+								// - query the namada tx at the given block height and block index
+								// - use protobuf to decode the tx bytes. then, borsh decode the tx
+								// 	  - grab the `MaspTxId` from the data fetched from the masp indexer
+								//    - look for a matching `Section::MaspTx`. if it is not present
+								//    in the tx, then it is an ibc shielding (`{"IbcData":"AABBCC010203..."}`);
+								//    otherwise, it is an internal masp tx (`{"MaspSection":[1,2,3,...]}`).
+								//       - still need to locate the data section containing the ibc shielding,
+								//       because its hash will be stored in the event
+								//    - look at c# code for inspiration
+								//       - https://github.com/heliaxdev/bitcoin-suisse-tx/blob/main/Tx.cs
+								//
+								//   ...
+								//
+								// - alternatively, we could tag everything as "MaspSection", and inject a new
+								//   masp tx section into the namada txs...
 								{
 									Key: "section",
 									Value: fmt.Sprintf(
