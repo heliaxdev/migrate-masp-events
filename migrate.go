@@ -121,13 +121,13 @@ func migrateEvents(db *leveldb.DB, maspIndexerUrl string) error {
 				return
 			}
 
-			txIndices, err := maspIndexerClient.BlockHeight(height)
+			maspTxs, err := maspIndexerClient.BlockHeight(height)
 			if err != nil {
 				errs <- err
 				return
 			}
 
-			dirty = dirty || len(txIndices) > 0
+			dirty = dirty || len(maspTxs) > 0
 
 			// TODO:
 			// - need to open leveldb db that contains block responses (with tx data)
@@ -135,43 +135,45 @@ func migrateEvents(db *leveldb.DB, maspIndexerUrl string) error {
 			// 		- if it is an ibc shielding, compute the data section hash
 			// 		- if it is a regular transfer tx, compute the masp tx id
 			// - will probably need to call rust code :((((((
-			for i := 0; i < len(txIndices); i++ {
-				abciResponses.EndBlock.Events = append(
-					abciResponses.EndBlock.Events,
-					types.Event{
-						Type: "masp/transfer",
-						Attributes: []types.EventAttribute{
-							{
-								Key:   "height",
-								Value: heightStr,
-								Index: true,
-							},
-							{
-								Key: "indexed-tx",
-								Value: fmt.Sprintf(
-									`{"block_height":%s,"block_index":%d,"batch_index":%d}`,
-									heightStr,
-									0, /* TODO */
-									0, /* TODO */
-								),
-								Index: true,
-							},
-							{
-								Key: "section",
-								Value: fmt.Sprintf(
-									`{"MaspSection":%s}`, /* TODO: could also be IBC */
-									"",                   /* TODO */
-								),
-								Index: true,
-							},
-							{
-								Key:   "event-level",
-								Value: "tx",
-								Index: true,
+			for i := 0; i < len(maspTxs); i++ {
+				for j := 0; j < len(maspTxs[i].Batch); j++ {
+					abciResponses.EndBlock.Events = append(
+						abciResponses.EndBlock.Events,
+						types.Event{
+							Type: "masp/transfer",
+							Attributes: []types.EventAttribute{
+								{
+									Key:   "height",
+									Value: heightStr,
+									Index: true,
+								},
+								{
+									Key: "indexed-tx",
+									Value: fmt.Sprintf(
+										`{"block_height":%s,"block_index":%d,"batch_index":%d}`,
+										heightStr,
+										maspTxs[i].BlockIndex,
+										maspTxs[i].Batch[j].MaspTxIndex,
+									),
+									Index: true,
+								},
+								{
+									Key: "section",
+									Value: fmt.Sprintf(
+										`{"MaspSection":%s}`, /* TODO: could also be IBC */
+										"",                   /* TODO */
+									),
+									Index: true,
+								},
+								{
+									Key:   "event-level",
+									Value: "tx",
+									Index: true,
+								},
 							},
 						},
-					},
-				)
+					)
+				}
 			}
 
 			if !dirty {
