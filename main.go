@@ -6,8 +6,6 @@ package main
 //   and load them again if something goes wrong
 // - hardcode phase3 start height, to only process the events in
 //   those blocks and speed up the migration
-// - check if end block events already contain `masp/transfer` or
-//   `masp/fee-payment` events for this program to be indempotent
 
 func main() {
 	subCommands := make(map[string]*SubCommand)
