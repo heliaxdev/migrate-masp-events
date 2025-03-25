@@ -33,7 +33,7 @@ type serverResponse struct {
 func NewMaspIndexerClient(url string) *MaspIndexerClient {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 
-	// Use either HTTP/1 and HTTP/2.
+	// Use either HTTP/1 or HTTP/2
 	t.Protocols = new(http.Protocols)
 	t.Protocols.SetHTTP1(true)
 	t.Protocols.SetHTTP2(true)
