@@ -63,7 +63,7 @@ func printEndBlocks(db *leveldb.DB, skipEmpty bool) error {
 			continue
 		}
 
-		height, err := extractHeight(iter.Key())
+		height, err := parseHeight(extractHeight(iter.Key()))
 		if err != nil {
 			return err
 		}
@@ -90,15 +90,16 @@ func printEndBlocks(db *leveldb.DB, skipEmpty bool) error {
 	return nil
 }
 
-func extractHeight(key []byte) (int, error) {
+func extractHeight(key []byte) string {
 	// NB: skip "abciResponsesKey:"
-	heightStr := string(key[17:])
+	return string(key[17:])
+}
 
-	h, err := strconv.Atoi(heightStr)
+func parseHeight(height string) (int, error) {
+	h, err := strconv.Atoi(height)
 	if err != nil {
 		return 0, fmt.Errorf("failed to parse block height from db key: %w", err)
 	}
-
 	return h, nil
 }
 

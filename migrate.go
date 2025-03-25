@@ -10,11 +10,13 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
 
+	"github.com/cometbft/cometbft/abci/types"
 	cmtstate "github.com/cometbft/cometbft/proto/tendermint/state"
 )
 
 type argsMigrate struct {
-	CometHome string
+	CometHome   string
+	MaspIndexer string
 }
 
 func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
@@ -30,6 +32,12 @@ func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
 				"",
 				"path to cometbft dir (e.g. .namada/namada.5f5de2dd1b88cba30586420/cometbft)",
 			)
+			flags.StringVar(
+				&args.MaspIndexer,
+				"masp-indexer",
+				"",
+				"url of masp indexer dir (e.g. https://bing.bong/api/v1)",
+			)
 		},
 		Entrypoint: func(iArgs any) error {
 			args := iArgs.(*argsMigrate)
@@ -40,17 +48,23 @@ func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
 			}
 			defer db.Close()
 
-			return migrateEvents(db)
+			return migrateEvents(db, args.MaspIndexer)
 		},
 	}
 }
 
-func migrateEvents(db *leveldb.DB) error {
+func migrateEvents(db *leveldb.DB, maspIndexerUrl string) error {
+	if maspIndexerUrl == "" {
+		return fmt.Errorf("masp indexer url was not set")
+	}
+
+	maspIndexerClient := NewMaspIndexerClient(maspIndexerUrl)
+
 	iter := db.NewIterator(util.BytesPrefix([]byte("abciResponsesKey:")), &opt.ReadOptions{})
 	defer iter.Release()
 
 	wg := &sync.WaitGroup{}
-	sem := make(chan struct{}, 128)
+	sem := make(chan struct{}, MaxConcurrentRequests)
 	errs := make(chan error, 1)
 
 	var mainErr error
@@ -100,16 +114,68 @@ func migrateEvents(db *leveldb.DB) error {
 				}
 			}
 
-			value, err = abciResponses.Marshal()
+			heightStr := extractHeight(iter.Key())
+			height, err := parseHeight(heightStr)
 			if err != nil {
-				errs <- fmt.Errorf("failed to marshal abci responses: %w", err)
+				errs <- err
 				return
 			}
 
-			// TODO: fetch new masp events and add them here
+			txIndices, err := maspIndexerClient.BlockHeight(height)
+			if err != nil {
+				errs <- err
+				return
+			}
+
+			dirty = dirty || len(txIndices) > 0
+
+			for i := 0; i < len(txIndices); i++ {
+				abciResponses.EndBlock.Events = append(
+					abciResponses.EndBlock.Events,
+					types.Event{
+						Type: "masp/transfer",
+						Attributes: []types.EventAttribute{
+							{
+								Key:   "height",
+								Value: heightStr,
+								Index: true,
+							},
+							{
+								Key: "indexed-tx",
+								Value: fmt.Sprintf(
+									`{"block_height":%s,"block_index":%d,"batch_index":%d}`,
+									heightStr,
+									0, /* TODO */
+									0, /* TODO */
+								),
+								Index: true,
+							},
+							{
+								Key: "section",
+								Value: fmt.Sprintf(
+									`{"MaspSection":%s}`, /* TODO: could also be IBC */
+									"",                   /* TODO */
+								),
+								Index: true,
+							},
+							{
+								Key:   "event-level",
+								Value: "tx",
+								Index: true,
+							},
+						},
+					},
+				)
+			}
 
 			if !dirty {
-				// NB: no changes were made to the db
+				// NB: no changes need to be made to the db
+				return
+			}
+
+			value, err = abciResponses.Marshal()
+			if err != nil {
+				errs <- fmt.Errorf("failed to marshal abci responses: %w", err)
 				return
 			}
 
