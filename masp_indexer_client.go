@@ -46,6 +46,8 @@ func NewMaspIndexerClient(url string) *MaspIndexerClient {
 	}
 }
 
+// TODO: if we care enough, use batch transfers to reduce the nr of requests
+// to the masp indexer webserver
 func (m *MaspIndexerClient) BlockHeight(height int) ([]Transaction, error) {
 	req, err := http.NewRequest(
 		"GET",
