@@ -85,7 +85,7 @@ func migrateEvents(db *leveldb.DB, maspIndexerUrl string) error {
 				wg.Done()
 			}()
 
-			dirty := false
+			containsMaspDataRefs := false
 
 			abciResponses := new(cmtstate.ABCIResponses)
 			err := abciResponses.Unmarshal(value)
@@ -104,7 +104,7 @@ func migrateEvents(db *leveldb.DB, maspIndexerUrl string) error {
 								abciResponses.EndBlock.Events[i].Attributes,
 								e,
 							)
-							dirty = true
+							containsMaspDataRefs = true
 						}
 					}
 				case "masp/transfer", "masp/fee-payment":
@@ -112,6 +112,10 @@ func migrateEvents(db *leveldb.DB, maspIndexerUrl string) error {
 					errs <- nil
 					return
 				}
+			}
+
+			if !containsMaspDataRefs {
+				return
 			}
 
 			heightStr := extractHeight(iter.Key())
@@ -126,8 +130,6 @@ func migrateEvents(db *leveldb.DB, maspIndexerUrl string) error {
 				errs <- err
 				return
 			}
-
-			dirty = dirty || len(maspTxs) > 0
 
 			for i := 0; i < len(maspTxs); i++ {
 				for j := 0; j < len(maspTxs[i].Batch); j++ {
@@ -185,11 +187,6 @@ func migrateEvents(db *leveldb.DB, maspIndexerUrl string) error {
 						},
 					)
 				}
-			}
-
-			if !dirty {
-				// NB: no changes need to be made to the db
-				return
 			}
 
 			value, err = abciResponses.Marshal()
