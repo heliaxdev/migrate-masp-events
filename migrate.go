@@ -36,7 +36,7 @@ func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
 				&args.MaspIndexer,
 				"masp-indexer",
 				"",
-				"url of masp indexer dir (e.g. https://bing.bong/api/v1)",
+				"url of masp indexer (e.g. https://bing.bong/api/v1)",
 			)
 		},
 		Entrypoint: func(iArgs any) error {
