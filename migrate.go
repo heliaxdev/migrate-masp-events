@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"path/filepath"
 
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
@@ -27,15 +26,9 @@ func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
 		Entrypoint: func(iArgs any) error {
 			args := iArgs.(*argsMigrate)
 
-			if args.CometHome == "" {
-				return fmt.Errorf("no cometbft home dir provided as arg")
-			}
-
-			dbPath := filepath.Join(args.CometHome, "data", "state.db")
-
-			db, err := leveldb.OpenFile(dbPath, nil)
+			db, err := openStateDb(args.CometHome)
 			if err != nil {
-				return fmt.Errorf("failed to open db in %s: %w", dbPath, err)
+				return err
 			}
 			defer db.Close()
 
