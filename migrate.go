@@ -204,6 +204,12 @@ func migrateEvents(db *leveldb.DB, maspIndexerUrl string) error {
 
 	wg.Wait()
 
+	// NB: one last attempt at getting errors
+	select {
+	case mainErr = <-errs:
+	default:
+	}
+
 	return mainErr
 }
 
