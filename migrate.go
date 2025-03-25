@@ -206,7 +206,11 @@ func migrateEvents(db *leveldb.DB, maspIndexerUrl string) error {
 
 	// NB: one last attempt at getting errors
 	select {
-	case mainErr = <-errs:
+	case freshErr := <-errs:
+		// NB: avoid non-errs overriding actual errs
+		if freshErr != nil {
+			mainErr = freshErr
+		}
 	default:
 	}
 
