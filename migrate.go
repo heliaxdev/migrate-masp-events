@@ -70,14 +70,14 @@ func migrateEvents(db *leveldb.DB, maspIndexerUrl string) error {
 	var mainErr error
 
 	for iter.Next() {
-		wg.Add(1)
-		sem <- struct{}{}
-
 		select {
 		case mainErr = <-errs:
 			break
 		default:
 		}
+
+		wg.Add(1)
+		sem <- struct{}{}
 
 		go func(key, value []byte) {
 			defer func() {
