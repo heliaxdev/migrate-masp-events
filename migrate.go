@@ -422,12 +422,19 @@ func borshOption(descriptor string, p []byte, f func([]byte) ([]byte, error)) ([
 	return f(p[1:])
 }
 
-func borshSkipCollection(descriptor string, p []byte) ([]byte, error) {
+func borshSkipCollection(descriptor string, itemLen int, p []byte) ([]byte, error) {
 	n, err := borshReadLength(descriptor, p)
 	if err != nil {
 		return nil, err
 	}
-	return p[n:], nil
+	p = p[4:]
+
+	skipLen := n * itemLen
+	if len(p) < skipLen {
+		return 0, fmt.Errorf("error decoding %s: short collection", descriptor)
+	}
+
+	return p[skipLen:], nil
 }
 
 func borshReadLength(descriptor string, p []byte) (int, error) {
