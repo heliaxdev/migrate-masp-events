@@ -52,7 +52,7 @@ func loadBlock(blockStore *leveldb.DB, height int) (*cmt.Block, error) {
 	}
 
 	pbb := new(cmtproto.Block)
-	buf := make([]byte, 0, 1024)
+	buf := make([]byte, 0, 4096)
 
 	for i := 0; i < int(blockMeta.BlockID.PartSetHeader.Total); i++ {
 		part, err := loadBlockPart(blockStore, height, i)
