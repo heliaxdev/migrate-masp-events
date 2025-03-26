@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"slices"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/cometbft/cometbft/abci/types"
 	cmtstate "github.com/cometbft/cometbft/proto/tendermint/state"
+
+	namproto "github.com/heliaxdev/migrate-masp-events/proto/types"
 )
 
 type argsMigrate struct {
@@ -137,6 +140,12 @@ func migrateEvents(stateDb, blockStoreDb *leveldb.DB, maspIndexerUrl string) err
 				return
 			}
 
+			//namadaTxs, err := loadNamadaTxs(blockStoreDb, height, maspTxs)
+			//if err != nil {
+			//	errs <- err
+			//	return
+			//}
+
 			for i := 0; i < len(maspTxs); i++ {
 				for j := 0; j < len(maspTxs[i].Batch); j++ {
 					abciResponses.EndBlock.Events = append(
@@ -226,4 +235,204 @@ func migrateEvents(stateDb, blockStoreDb *leveldb.DB, maspIndexerUrl string) err
 func swapRemove[T any](slice []T, index int) []T {
 	slice[index] = slice[len(slice)-1]
 	return slice[:len(slice)-1]
+}
+
+func decodeNamadaTxProto(protoBytes []byte) ([]byte, error) {
+	var tx namproto.Tx
+	err := tx.Unmarshal(protoBytes)
+	if err != nil {
+		return nil, fmt.Errorf("proto unmarshal of namada tx failed: %w", err)
+	}
+	return tx.Data, nil
+}
+
+func loadNamadaTxs(blockStoreDb *leveldb.DB, height int, maspTxs []Transaction) ([][]byte, error) {
+	var txs [][]byte
+
+	for i := 0; i < len(maspTxs); i++ {
+		block, err := loadBlock(blockStoreDb, height)
+		if err != nil {
+			return nil, err
+		}
+
+		namadaTx, err := decodeNamadaTxProto(block.Data.Txs[maspTxs[i].BlockIndex])
+		if err != nil {
+			return nil, fmt.Errorf(
+				"could not parse namada tx proto bytes at height %d and index %d: %w",
+				height,
+				maspTxs[i].BlockIndex,
+				err,
+			)
+		}
+
+		txs = append(txs, namadaTx)
+	}
+
+	return txs, nil
+}
+
+func locateMaspTxIdsInMaspSections(namadaTxBorshData []byte) ([][32]byte, error) {
+	maspTxIds, err := locateMaspTxIdsInMaspSectionsAux(namadaTxBorshData)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"unable to localte masp tx ids: failed to parse borsh encoded namada tx: %w",
+			err,
+		)
+	}
+	return maspTxIds, nil
+}
+
+func locateMaspTxIdsInMaspSectionsAux(namadaTxBorshData []byte) ([][32]byte, error) {
+	var (
+		err            error
+		parsedSections [][32]byte
+	)
+
+	p := namadaTxBorshData
+
+	// PARSE TX HEADER
+	// =========================================================================
+
+	// skip chain id
+	p, err = borshSkipCollection("chain_id:ChainId", p)
+	if err != nil {
+		return nil, err
+	}
+
+	// skip expiration
+	p, err = borshOption("expiration:Option<DateTimeUtc>", p, func(p []byte) ([]byte, error) {
+		return borshSkipCollection("expiration:DateTimeUtc", p)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// skip timestamp
+	p, err = borshSkipCollection("timestamp:DateTimeUtc", p)
+	if err != nil {
+		return nil, err
+	}
+
+	// skip commitments
+	p, err = borshSkipCollection("batch:HashSet<TxCommitments>", p)
+	if err != nil {
+		return nil, err
+	}
+
+	// skip atomic flag
+	p, err = borshSkipBool("atomic:bool", p)
+	if err != nil {
+		return nil, err
+	}
+
+	// skip tx type
+	p, err = borshSkipTxType("tx_type:TxType", p)
+	if err != nil {
+		return nil, err
+	}
+
+	// PARSE TX SECTIONS
+	// =========================================================================
+	numHeaders, err := borshReadLength("sections:Vec<Header>", p)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := 0; i < numHeaders; i++ {
+		newP, maspTxId, ok, err := borshMaybeMaspSection("section:Section", p)
+		if err != nil {
+			return nil, err
+		}
+
+		p = newP
+
+		if !ok {
+			continue
+		}
+
+		parsedSections = append(parsedSections, maspTxId)
+	}
+
+	return parsedSections, nil
+}
+
+func borshMaybeMaspSection(descriptor string, p []byte) ([]byte, [32]byte, bool, error) {
+	// TODO
+	return nil, [32]byte{}, false, nil
+}
+
+func borshSkipTxType(descriptor string, p []byte) ([]byte, error) {
+	if len(p) < 1 {
+		return nil, fmt.Errorf("error decoding %s: TxType discriminant not present", descriptor)
+	}
+
+	switch p[0] {
+	// raw tx
+	case 0:
+		return p[1:], nil
+	// wrapper tx
+	case 1:
+		const (
+			denominatedAmountLen = 256 + 1
+			addressLen           = 1 + 20
+			feeLen               = denominatedAmountLen + addressLen
+			pubKeyLenSecp        = 1 + 33
+			pubKeyLenEdwrd       = 1 + 32
+			gasLimitLen          = 8
+			wrapperTxLenSecp     = feeLen + pubKeyLenSecp + gasLimitLen
+			wrapperTxLenEdwrd    = feeLen + pubKeyLenEdwrd + gasLimitLen
+		)
+		if len(p) < feeLen+1 {
+			return nil, fmt.Errorf("error decoding %s: incomplete wrapper tx data in header", descriptor)
+		}
+		var wrapperTxLen int
+		switch p[feeLen] {
+		case 0:
+			wrapperTxLen = wrapperTxLenEdwrd
+		case 1:
+			wrapperTxLen = wrapperTxLenSecp
+		default:
+			return nil, fmt.Errorf("error decoding %s: invalid pubkey in header", descriptor)
+		}
+		return p[wrapperTxLen:], nil
+	// protocol tx
+	case 2:
+		return nil, fmt.Errorf("error decoding %s: there should be no protocol txs in blocks")
+	default:
+		return nil, fmt.Errorf("error decoding %s: invalid TxType discriminant %d", descriptor, p[0])
+	}
+}
+
+func borshSkipBool(descriptor string, p []byte) ([]byte, error) {
+	if len(p) < 1 {
+		return nil, fmt.Errorf("error decoding %s: bool is not present", descriptor)
+	}
+	return p[1:], nil
+}
+
+func borshOption(descriptor string, p []byte, f func([]byte) ([]byte, error)) ([]byte, error) {
+	if len(p) < 1 {
+		return nil, fmt.Errorf("error decoding %s: option tag byte is not present", descriptor)
+	}
+
+	if p[0] == 0 {
+		return p[1:], nil
+	}
+
+	return f(p[1:])
+}
+
+func borshSkipCollection(descriptor string, p []byte) ([]byte, error) {
+	n, err := borshReadLength(descriptor, p)
+	if err != nil {
+		return nil, err
+	}
+	return p[n:], nil
+}
+
+func borshReadLength(descriptor string, p []byte) (int, error) {
+	if len(p) < 4 {
+		return 0, fmt.Errorf("error decoding %s: could not read length of collection", descriptor)
+	}
+	return int(binary.LittleEndian.Uint32(p)), nil
 }
