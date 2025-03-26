@@ -99,10 +99,6 @@ func loadBlockPart(blockStore *leveldb.DB, height, index int) (*cmt.Part, error)
 		)
 	}
 
-	if len(bz) == 0 {
-		return nil, fmt.Errorf("block %d is not committed", height)
-	}
-
 	err = proto.Unmarshal(bz, pbpart)
 	if err != nil {
 		return nil, fmt.Errorf(
