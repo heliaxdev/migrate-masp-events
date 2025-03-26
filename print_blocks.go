@@ -57,7 +57,7 @@ func printEndBlocksTxs(db *leveldb.DB, skipEmpty bool) error {
 			continue
 		}
 
-		txs := make([][]byte, 0, 8)
+		txs := make([]string, 0, 8)
 
 		for i := 0; i < len(block.Data.Txs); i++ {
 			tx := &proto.Tx{}
@@ -65,7 +65,7 @@ func printEndBlocksTxs(db *leveldb.DB, skipEmpty bool) error {
 			if err != nil {
 				return fmt.Errorf("unmarshal tx %d of block %d failed: %w", i, h, err)
 			}
-			txs = append(txs, tx.Data)
+			txs = append(txs, string(tx.Data))
 		}
 
 		fmt.Printf("Header => %#v\n", block.Header)
