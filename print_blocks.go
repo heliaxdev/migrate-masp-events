@@ -7,6 +7,8 @@ import (
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
+
+	proto "github.com/heliaxdev/migrate-masp-events/proto/types"
 )
 
 type argsPrintBlocks struct {
@@ -55,7 +57,19 @@ func printEndBlocksTxs(db *leveldb.DB, skipEmpty bool) error {
 			continue
 		}
 
-		fmt.Printf("%#v\n\n", block)
+		txs := make([][]byte, 0, 8)
+
+		for i := 0; i < len(block.Data.Txs); i++ {
+			tx := &proto.Tx{}
+			err = tx.Unmarshal(block.Data.Txs[i])
+			if err != nil {
+				return fmt.Errorf("unmarshal tx %d of block %d failed: %w", i, h, err)
+			}
+			txs = append(txs, tx.Data)
+		}
+
+		fmt.Printf("Header => %#v\n", block.Header)
+		fmt.Printf("Txs => %#v\n\n", txs)
 	}
 
 	return nil
