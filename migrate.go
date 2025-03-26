@@ -78,6 +78,9 @@ func migrateEvents(stateDb, blockStoreDb *leveldb.DB, maspIndexerUrl string) err
 
 	var mainErr error
 
+	// TODO: change this to a loop over [start height, end height].
+	// at the beginning of the go routine, read the k:v pair associated
+	// with the height passed as an arg to the go routine.
 	for iter.Next() {
 		select {
 		case mainErr = <-errs:
@@ -371,8 +374,28 @@ func locateMaspTxIdsInMaspSectionsAux(namadaTxBorshData []byte) ([][32]byte, err
 }
 
 func borshMaybeMaspSection(descriptor string, p []byte) ([]byte, [32]byte, bool, error) {
-	// TODO
-	return nil, [32]byte{}, false, nil
+	var txId [32]byte
+
+	e := func(err error) ([]byte, [32]byte, bool, error) {
+		return nil, txId, false, err
+	}
+
+	if len(p) < 1 {
+		return e(fmt.Errorf(
+			"error decoding %s: Section discriminant not present",
+			descriptor,
+		))
+	}
+
+	switch p[0] {
+	// data
+	case 0:
+		p = p[1:]
+
+		// TODO
+	}
+
+	return nil, txId, false, nil
 }
 
 func borshSkipTxType(descriptor string, p []byte) ([]byte, error) {
@@ -396,10 +419,12 @@ func borshSkipTxType(descriptor string, p []byte) ([]byte, error) {
 			wrapperTxLenSecp     = feeLen + pubKeyLenSecp + gasLimitLen
 			wrapperTxLenEdwrd    = feeLen + pubKeyLenEdwrd + gasLimitLen
 		)
+		p = p[1:]
 		if len(p) < feeLen+1 {
 			return nil, fmt.Errorf("error decoding %s: incomplete wrapper tx data in header", descriptor)
 		}
 		var wrapperTxLen int
+		// check which public key kind we have
 		switch p[feeLen] {
 		case 0:
 			wrapperTxLen = wrapperTxLenEdwrd
