@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -45,6 +46,9 @@ func loadBlock(blockStore *leveldb.DB, height int) (*cmt.Block, error) {
 	blockMeta, err := loadBlockMeta(blockStore, height)
 	if err != nil {
 		return nil, err
+	}
+	if blockMeta == nil {
+		return nil, nil
 	}
 
 	pbb := new(cmtproto.Block)
@@ -130,15 +134,14 @@ func loadBlockMeta(blockStore *leveldb.DB, height int) (*cmt.BlockMeta, error) {
 		new(opt.ReadOptions),
 	)
 	if err != nil {
+		if errors.Is(err, leveldb.ErrNotFound) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf(
 			"failed to read block meta of height %d from db: %w",
 			height,
 			err,
 		)
-	}
-
-	if len(bz) == 0 {
-		return nil, fmt.Errorf("block %d is not committed", height)
 	}
 
 	err = proto.Unmarshal(bz, pbbm)

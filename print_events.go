@@ -17,23 +17,23 @@ import (
 	cmtstate "github.com/cometbft/cometbft/proto/tendermint/state"
 )
 
-type argsPrint struct {
+type argsPrintEvents struct {
 	SkipEmpty bool
 	CometHome string
 }
 
 func RegisterCommandPrintEvents(subCommands map[string]*SubCommand) {
 	subCommands["print-events"] = &SubCommand{
-		Args:        &argsPrint{},
+		Args:        &argsPrintEvents{},
 		Description: "print all end blocks events in the state db of cometbft",
 		ConfigureFlags: func(iArgs any, flags *flag.FlagSet) {
-			args := iArgs.(*argsPrint)
+			args := iArgs.(*argsPrintEvents)
 
 			flags.StringVar(&args.CometHome, "cometbft-homedir", "", "path to cometbft dir (e.g. .namada/namada.5f5de2dd1b88cba30586420/cometbft)")
 			flags.BoolVar(&args.SkipEmpty, "skip-empty", false, "skip printing blocks with no events")
 		},
 		Entrypoint: func(iArgs any) error {
-			args := iArgs.(*argsPrint)
+			args := iArgs.(*argsPrintEvents)
 
 			db, err := openStateDb(args.CometHome)
 			if err != nil {
@@ -41,12 +41,12 @@ func RegisterCommandPrintEvents(subCommands map[string]*SubCommand) {
 			}
 			defer db.Close()
 
-			return printEndBlocks(db, args.SkipEmpty)
+			return printEndBlocksEvents(db, args.SkipEmpty)
 		},
 	}
 }
 
-func printEndBlocks(db *leveldb.DB, skipEmpty bool) error {
+func printEndBlocksEvents(db *leveldb.DB, skipEmpty bool) error {
 	iter := db.NewIterator(util.BytesPrefix([]byte("abciResponsesKey:")), &opt.ReadOptions{})
 	defer iter.Release()
 
