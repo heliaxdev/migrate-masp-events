@@ -4,6 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
+	"strings"
+	"text/tabwriter"
 )
 
 type SubCommand struct {
@@ -76,6 +79,12 @@ func (r *Runner) Run() {
 	topLevel := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	usage := topLevel.Usage
 
+	type cmd struct {
+		name string
+		exec string
+		desc string
+	}
+
 	topLevel.Usage = func() {
 		// Print default usage
 		usage()
@@ -84,12 +93,38 @@ func (r *Runner) Run() {
 			return
 		}
 
+		maxWidth := -1
+		allSubCmds := make([]cmd, 0, len(r.subCommands))
+
+		for name, subcmd := range r.subCommands {
+			c := cmd{
+				name: name,
+				exec: fmt.Sprintf("%s %s", os.Args[0], name),
+				desc: subcmd.Description,
+			}
+
+			if len(c.exec) > maxWidth {
+				maxWidth = len(c.exec)
+			}
+
+			allSubCmds = append(allSubCmds, c)
+		}
+
+		slices.SortFunc(allSubCmds, func(c1, c2 cmd) int {
+			return strings.Compare(c1.name, c2.name)
+		})
+
 		// Print all subcmds
 		fmt.Fprintln(os.Stderr)
 
-		for name, subcmd := range r.subCommands {
-			fmt.Fprintf(os.Stderr, "  %s %s\t\t%s\n", os.Args[0], name, subcmd.Description)
+		w := &tabwriter.Writer{}
+		w.Init(os.Stderr, max(2+maxWidth, 8), 4, 4, ' ', tabwriter.TabIndent)
+
+		for _, subCmd := range allSubCmds {
+			fmt.Fprintf(w, "  %s\t%s\n", subCmd.exec, subCmd.desc)
 		}
+
+		w.Flush()
 	}
 
 	topLevel.Parse(os.Args)
@@ -107,4 +142,11 @@ func (r *Runner) Run() {
 	}
 
 	subcmd.Run()
+}
+
+func max(x, y int) int {
+	if x > y {
+		return x
+	}
+	return y
 }
