@@ -10,7 +10,7 @@ package main
 func main() {
 	subCommands := make(map[string]*SubCommand)
 
-	RegisterCommandPrint(subCommands)
+	RegisterCommandPrintEvents(subCommands)
 	RegisterCommandMigrate(subCommands)
 
 	r := NewRunner(subCommands)

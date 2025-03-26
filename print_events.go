@@ -22,8 +22,8 @@ type argsPrint struct {
 	CometHome string
 }
 
-func RegisterCommandPrint(subCommands map[string]*SubCommand) {
-	subCommands["print"] = &SubCommand{
+func RegisterCommandPrintEvents(subCommands map[string]*SubCommand) {
+	subCommands["print-events"] = &SubCommand{
 		Args:        &argsPrint{},
 		Description: "print all end blocks events in the state db of cometbft",
 		ConfigureFlags: func(iArgs any, flags *flag.FlagSet) {
