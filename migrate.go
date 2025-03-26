@@ -294,27 +294,41 @@ func locateMaspTxIdsInMaspSectionsAux(namadaTxBorshData []byte) ([][32]byte, err
 	// =========================================================================
 
 	// skip chain id
-	p, err = borshSkipCollection("chain_id:ChainId", p)
+	p, err = borshSkipByteCollection("chain_id:ChainId", p)
 	if err != nil {
 		return nil, err
 	}
 
 	// skip expiration
 	p, err = borshOption("expiration:Option<DateTimeUtc>", p, func(p []byte) ([]byte, error) {
-		return borshSkipCollection("expiration:DateTimeUtc", p)
+		return borshSkipByteCollection("expiration:DateTimeUtc", p)
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	// skip timestamp
-	p, err = borshSkipCollection("timestamp:DateTimeUtc", p)
+	p, err = borshSkipByteCollection("timestamp:DateTimeUtc", p)
 	if err != nil {
 		return nil, err
 	}
 
 	// skip commitments
-	p, err = borshSkipCollection("batch:HashSet<TxCommitments>", p)
+	p, err = borshSkipCollection(
+		"batch:HashSet<TxCommitments>", p,
+		func(numItems int, p []byte) ([]byte, error) {
+			const txCommitmentsLen = 32 * 3
+
+			skipLen := numItems * txCommitmentsLen
+
+			if len(p) < skipLen {
+				return nil, fmt.Errorf(
+					"error decoding cmt:TxCommitments: expected more tx commitments",
+				)
+			}
+			return p[skipLen:], nil
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -410,9 +424,16 @@ func borshSkipBool(descriptor string, p []byte) ([]byte, error) {
 	return p[1:], nil
 }
 
-func borshOption(descriptor string, p []byte, f func([]byte) ([]byte, error)) ([]byte, error) {
+func borshOption(
+	descriptor string,
+	p []byte,
+	f func([]byte) ([]byte, error),
+) ([]byte, error) {
 	if len(p) < 1 {
-		return nil, fmt.Errorf("error decoding %s: option tag byte is not present", descriptor)
+		return nil, fmt.Errorf(
+			"error decoding %s: option tag byte is not present",
+			descriptor,
+		)
 	}
 
 	if p[0] == 0 {
@@ -422,19 +443,26 @@ func borshOption(descriptor string, p []byte, f func([]byte) ([]byte, error)) ([
 	return f(p[1:])
 }
 
-func borshSkipCollection(descriptor string, itemLen int, p []byte) ([]byte, error) {
+func borshSkipCollection(
+	descriptor string,
+	p []byte,
+	f func(int, []byte) ([]byte, error),
+) ([]byte, error) {
 	n, err := borshReadLength(descriptor, p)
 	if err != nil {
 		return nil, err
 	}
-	p = p[4:]
 
-	skipLen := n * itemLen
-	if len(p) < skipLen {
-		return 0, fmt.Errorf("error decoding %s: short collection", descriptor)
-	}
+	return f(n, p[4:])
+}
 
-	return p[skipLen:], nil
+func borshSkipByteCollection(descriptor string, p []byte) ([]byte, error) {
+	return borshSkipCollection(descriptor, p, func(numItems int, p []byte) ([]byte, error) {
+		if len(p) < numItems {
+			return nil, fmt.Errorf("error decoding %s: byte collection is too short", descriptor)
+		}
+		return p[numItems:], nil
+	})
 }
 
 func borshReadLength(descriptor string, p []byte) (int, error) {
