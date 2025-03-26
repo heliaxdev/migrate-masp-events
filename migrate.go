@@ -42,25 +42,31 @@ func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
 		Entrypoint: func(iArgs any) error {
 			args := iArgs.(*argsMigrate)
 
-			db, err := openStateDb(args.CometHome)
+			stateDb, err := openStateDb(args.CometHome)
 			if err != nil {
 				return err
 			}
-			defer db.Close()
+			defer stateDb.Close()
 
-			return migrateEvents(db, args.MaspIndexer)
+			blockStoreDb, err := openBlockStoreDb(args.CometHome)
+			if err != nil {
+				return err
+			}
+			defer blockStoreDb.Close()
+
+			return migrateEvents(stateDb, blockStoreDb, args.MaspIndexer)
 		},
 	}
 }
 
-func migrateEvents(db *leveldb.DB, maspIndexerUrl string) error {
+func migrateEvents(stateDb, blockStoreDb *leveldb.DB, maspIndexerUrl string) error {
 	if maspIndexerUrl == "" {
 		return fmt.Errorf("masp indexer url was not set")
 	}
 
 	maspIndexerClient := NewMaspIndexerClient(maspIndexerUrl)
 
-	iter := db.NewIterator(util.BytesPrefix([]byte("abciResponsesKey:")), &opt.ReadOptions{})
+	iter := stateDb.NewIterator(util.BytesPrefix([]byte("abciResponsesKey:")), &opt.ReadOptions{})
 	defer iter.Release()
 
 	wg := &sync.WaitGroup{}
@@ -195,7 +201,7 @@ func migrateEvents(db *leveldb.DB, maspIndexerUrl string) error {
 				return
 			}
 
-			err = db.Put(key, value, new(opt.WriteOptions))
+			err = stateDb.Put(key, value, new(opt.WriteOptions))
 			if err != nil {
 				errs <- fmt.Errorf("failed to write migrated abci responses to db: %w", err)
 			}
