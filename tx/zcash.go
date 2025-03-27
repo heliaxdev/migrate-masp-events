@@ -7,6 +7,32 @@ import (
 	"github.com/gagliardetto/binary"
 )
 
+type ZcashVector[T bin.BinaryUnmarshaler] struct {
+	Data []T
+}
+
+func (v *ZcashVector[T]) UnmarshalWithDecoder(decoder *bin.Decoder) error {
+	var c ZcashCompactSize
+
+	err := c.UnmarshalWithDecoder(decoder)
+	if err != nil {
+		return fmt.Errorf("failed to decode vec size: %w", err)
+	}
+
+	v.Data = v.Data[:0]
+
+	for i := uint64(0); i < c.Size; i++ {
+		var decoded T
+		err = decoded.UnmarshalWithDecoder(decoder)
+		if err != nil {
+			return fmt.Errorf("failed to decode vec elem: %w", err)
+		}
+		v.Data = append(v.Data, decoded)
+	}
+
+	return nil
+}
+
 type ZcashCompactSize struct {
 	Size uint64
 }

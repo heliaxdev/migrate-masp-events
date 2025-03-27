@@ -116,38 +116,3 @@ type Signature struct {
 	Ed25519   [64]byte
 	Secp256k1 [65]byte
 }
-
-type MaspTx struct {
-	TxId [32]byte
-
-	Unused [1 + 1 + 4 + 4]byte
-
-	TransparentBundle TransparentBundle `bin:"optional"`
-	SaplingBundle     SaplingBundle     `bin:"optional"`
-}
-
-type TransparentBundle struct {
-	Vin  []TransparentTx
-	Vout []TransparentTx
-}
-
-type TransparentTx struct {
-	AssetType [32]byte
-	Value     uint64
-	Address   [20]byte
-}
-
-type SaplingBundle struct {
-	Spends       []SpendDescription
-	Converts     []ConvertDescription
-	Outputs      []OutputDescription
-	ValueBalance I128Sum
-}
-
-type SpendDescription struct{}
-
-type ConvertDescription struct{}
-
-type OutputDescription struct{}
-
-type I128Sum struct{}
