@@ -38,7 +38,7 @@ func (s *ZcashCompactSize) UnmarshalWithDecoder(decoder *bin.Decoder) error {
 			return fmt.Errorf("got tag 254 but compact size is %d", n)
 		}
 		s.Size = uint64(n)
-	default:
+	default: // 255
 		n, err := decoder.ReadUint64(stdbin.LittleEndian)
 		if err != nil {
 			return err
