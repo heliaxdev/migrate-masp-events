@@ -7,11 +7,11 @@ import (
 	"github.com/gagliardetto/binary"
 )
 
-type CompactSize struct {
+type ZcashCompactSize struct {
 	Size uint64
 }
 
-func (s *CompactSize) UnmarshalWithDecoder(decoder *bin.Decoder) error {
+func (s *ZcashCompactSize) UnmarshalWithDecoder(decoder *bin.Decoder) error {
 	tag, err := decoder.ReadUint8()
 	if err != nil {
 		return err

@@ -6,9 +6,9 @@ import (
 	"github.com/gagliardetto/binary"
 )
 
-func TestCompactSize(t *testing.T) {
+func TestZcashCompactSize(t *testing.T) {
 	eval := func(expected uint64, data []byte) {
-		var c CompactSize
+		var c ZcashCompactSize
 
 		d := bin.NewBorshDecoder(data)
 
