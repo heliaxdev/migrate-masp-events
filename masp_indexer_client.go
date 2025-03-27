@@ -66,7 +66,7 @@ func (m *MaspIndexerClient) BlockHeight(height int) ([]Transaction, error) {
 		"Connection", "keep-alive",
 	)
 	req.Header.Add(
-		"Keep-Alive", fmt.Sprintf("timeout=60, max=%s", MaxConcurrentRequests),
+		"Keep-Alive", fmt.Sprintf("timeout=60, max=%d", MaxConcurrentRequests),
 	)
 
 	rsp, err := m.client.Do(req)
