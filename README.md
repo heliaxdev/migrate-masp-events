@@ -10,6 +10,7 @@ MASP indexers.
 
 Simply run `make`. You will need recent Go and Rust toolchains
 available in your `PATH`. The resulting binary is `migrate-masp-events`.
+Also, make sure you export `CGO_ENABLED=1` to your environment.
 
 ## Migration instructions
 
