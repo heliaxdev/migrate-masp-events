@@ -100,29 +100,19 @@ func migrateEvents(
 	startHeight, endHeight int,
 	continueMigrating bool,
 ) error {
+	var err error
+
 	if maspIndexerUrl == "" {
 		return fmt.Errorf("masp indexer url was not set")
 	}
 
-	if endHeight == 0 {
-		lastCometHeight, err := loadLastDbHeight(blockStoreDb)
-		if err != nil {
-			return err
-		}
-		endHeight = lastCometHeight
-	}
-
-	switch {
-	case startHeight <= 0:
-		return fmt.Errorf("start height cannot be lower than or equal to 0")
-	case endHeight < 0:
-		return fmt.Errorf("end height cannot be lower than 0")
-	case startHeight > endHeight:
-		return fmt.Errorf(
-			"start height (%d) is greater than end height (%d)",
-			startHeight,
-			endHeight,
-		)
+	startHeight, endHeight, err = validateHeightRange(
+		blockStoreDb,
+		startHeight,
+		endHeight,
+	)
+	if err != nil {
+		return err
 	}
 
 	log.Println("migrating events starting from block", startHeight, "to", endHeight)
@@ -136,263 +126,35 @@ func migrateEvents(
 
 	maspIndexerClient := NewMaspIndexerClient(maspIndexerUrl)
 
-	wg := &sync.WaitGroup{}
-	sem := make(chan struct{}, MaxConcurrentRequests)
-	errs := make(chan error, MaxConcurrentRequests+1)
-	reportErr := func(e error) {
-		errs <- e
-	}
+	migrationCtx := newMigrateEventsSyncCtx(totalToProcess)
 
 	var mainErr error
 
-	txn, err := stateDb.OpenTransaction()
+	stateDbTxn, err := stateDb.OpenTransaction()
 	if err != nil {
 		return fmt.Errorf("failed to begin state db transaction")
 	}
 
-	wg.Add(totalToProcess)
-
 	for height := startHeight; height <= endHeight; height++ {
-		select {
-		case mainErr = <-errs:
+		var exit bool
+
+		if exit, mainErr = migrationCtx.checkForErrors(); exit {
 			break
-		default:
 		}
 
-		sem <- struct{}{}
-
-		go func(height int) {
-			defer func() {
-				<-sem
-				wg.Done()
-			}()
-
-			log.Println("began processing events in block", height)
-
-			key := []byte(fmt.Sprintf("abciResponsesKey:%d", height))
-			value, err := txn.Get(key, &opt.ReadOptions{})
-			if err != nil {
-				reportErr(fmt.Errorf("failed to read block %d from state db: %w", height, err))
-				return
-			}
-
-			log.Println("read events of block", height, "from state db")
-
-			containsOldMaspDataRefs := false
-			containsNewMaspDataRefs := false
-
-			abciResponses := new(cmtstate.ABCIResponses)
-			if err := abciResponses.Unmarshal(value); err != nil {
-				reportErr(fmt.Errorf("failed to unmarshal abci responses from state db: %w", err))
-				return
-			}
-
-			for i := 0; i < len(abciResponses.EndBlock.Events); i++ {
-				switch abciResponses.EndBlock.Events[i].Type {
-				case "tx/applied":
-					for e := 0; e < len(abciResponses.EndBlock.Events[i].Attributes); e++ {
-						if abciResponses.EndBlock.Events[i].Attributes[e].Key == "masp_data_refs" {
-							abciResponses.EndBlock.Events[i].Attributes = swapRemove(
-								abciResponses.EndBlock.Events[i].Attributes,
-								e,
-							)
-							containsOldMaspDataRefs = true
-						}
-					}
-				case "masp/transfer", "masp/fee-payment":
-					if !continueMigrating {
-						log.Println("this db has already been migrated")
-						reportErr(nil)
-						return
-					}
-					containsNewMaspDataRefs = true
-				}
-			}
-
-			if !containsOldMaspDataRefs {
-				log.Println("no masp data refs found in block", height, "to migrate")
-				return
-			}
-			if containsNewMaspDataRefs {
-				reportErr(fmt.Errorf("block %d has old and new masp data refs", height))
-				return
-			}
-
-			log.Println("querying events of block", height, "from masp indexer")
-
-			maspTxs, err := maspIndexerClient.BlockHeight(height)
-			if err != nil {
-				reportErr(err)
-				return
-			}
-
-			log.Println("loading block data of height", height, "from blockstore db")
-
-			namadaTxs, err := loadNamadaTxsWithMaspData(blockStoreDb, height, maspTxs)
-			if err != nil {
-				reportErr(err)
-				return
-			}
-
-			log.Println(
-				"begun migrating events of block",
-				height,
-				"which has",
-				len(maspTxs),
-				"tx batches with masp txs",
-			)
-
-			for i := 0; i < len(maspTxs); i++ {
-				log.Println(
-					"begun processing masp txs in tx batch",
-					maspTxs[i].BlockIndex,
-					"of block",
-					height,
-				)
-
-				for j := 0; j < len(maspTxs[i].Batch); j++ {
-					maspTxId, err := computeMaspTxId(maspTxs[i].Batch[j].Bytes)
-					if err != nil {
-						reportErr(fmt.Errorf("block height %d failure: %w", height, err))
-						return
-					}
-
-					maspSections, err := locateMaspTxIdsInMaspSections(
-						namadaTxs[maspTxs[i].BlockIndex],
-					)
-					if err != nil {
-						reportErr(fmt.Errorf("block height %d failure: %w", height, err))
-						return
-					}
-
-					log.Println(
-						"located all masp sections of block",
-						height,
-						"at index",
-						maspTxs[i].BlockIndex,
-					)
-
-					var sectionEventValue string
-
-					if sec, ok := maspSections[maspTxId]; ok {
-						hexHash := strings.ToUpper(hex.EncodeToString(sec.Hash[:]))
-
-						if sec.Ibc {
-							sectionEventValue = fmt.Sprintf(
-								`{"IbcData":"%s"}`,
-								hexHash,
-							)
-
-							log.Println("found ibc data section", hexHash, "at height", height, "with masp tx")
-						} else {
-							var buf bytes.Buffer
-
-							err = json.NewEncoder(&buf).Encode(&sec.Hash)
-							if err != nil {
-								reportErr(fmt.Errorf(
-									"block height %d failure: failed to encode masp tx id to json: %w",
-									height,
-									err,
-								))
-								return
-							}
-
-							encoded := buf.String()
-							if len(encoded) > 0 && encoded[len(encoded)-1] == '\n' {
-								encoded = encoded[:len(encoded)-1]
-							}
-
-							sectionEventValue = fmt.Sprintf(
-								`{"MaspSection":%s}`,
-								encoded,
-							)
-
-							log.Println("found masp section", hexHash, "at height", height)
-						}
-					} else {
-						reportErr(fmt.Errorf(
-							"block height %d failure: unable to locate masp tx %v",
-							height,
-							maspTxId,
-						))
-						return
-					}
-
-					abciResponses.EndBlock.Events = append(
-						abciResponses.EndBlock.Events,
-						types.Event{
-							Type: "masp/transfer",
-							Attributes: []types.EventAttribute{
-								{
-									Key:   "height",
-									Value: strconv.Itoa(height),
-									Index: true,
-								},
-								{
-									Key: "indexed-tx",
-									Value: fmt.Sprintf(
-										`{"block_height":%d,"block_index":%d,"batch_index":%d}`,
-										height,
-										maspTxs[i].BlockIndex,
-										maspTxs[i].Batch[j].MaspTxIndex,
-									),
-									Index: true,
-								},
-								{
-									Key:   "section",
-									Value: sectionEventValue,
-									Index: true,
-								},
-								{
-									Key:   "event-level",
-									Value: "tx",
-									Index: true,
-								},
-							},
-						},
-					)
-				}
-			}
-
-			log.Println("replaced all event data of block", height)
-
-			value, err = abciResponses.Marshal()
-			if err != nil {
-				reportErr(fmt.Errorf("failed to marshal abci responses: %w", err))
-				return
-			}
-
-			log.Println("storing changes of block", height, "in db")
-
-			err = txn.Put(key, value, new(opt.WriteOptions))
-			if err != nil {
-				reportErr(fmt.Errorf("failed to write migrated abci responses to db: %w", err))
-			}
-
-			log.Println("migrated all events of block", height)
-		}(height)
+		migrationCtx.migrateHeight(
+			height,
+			stateDbTxn,
+			blockStoreDb,
+			maspIndexerClient,
+			continueMigrating,
+		)
 	}
 
-	wg.Wait()
-	close(errs)
-
-	// NB: one last attempt at getting errors
-	for freshErr := range errs {
-		// NB: avoid non-errs overriding actual errs
-		if freshErr != nil {
-			mainErr = freshErr
-		}
-	}
-
-	if mainErr == nil {
-		log.Println("done migrating events with no errors")
-		txn.Commit()
-	} else {
-		log.Println("encountered error migrating events")
-		txn.Discard()
-	}
-
-	return mainErr
+	return migrationCtx.waitForAllMigrations(
+		mainErr,
+		stateDbTxn,
+	)
 }
 
 func swapRemove[T any](slice []T, index int) []T {
@@ -462,4 +224,322 @@ func computeMaspTxId(maspTxBorshData []byte) ([32]byte, error) {
 		)
 	}
 	return maspTxId, nil
+}
+
+func validateHeightRange(
+	blockStoreDb *leveldb.DB,
+	startHeight, endHeight int,
+) (int, int, error) {
+	if endHeight == 0 {
+		lastCometHeight, err := loadLastDbHeight(blockStoreDb)
+		if err != nil {
+			return 0, 0, err
+		}
+		endHeight = lastCometHeight
+	}
+
+	switch {
+	case startHeight <= 0:
+		return 0, 0, fmt.Errorf("start height cannot be lower than or equal to 0")
+	case endHeight <= 0:
+		return 0, 0, fmt.Errorf("end height cannot be lower than or equal to 0")
+	case startHeight > endHeight:
+		return 0, 0, fmt.Errorf(
+			"start height (%d) is greater than end height (%d)",
+			startHeight,
+			endHeight,
+		)
+	}
+
+	return startHeight, endHeight, nil
+}
+
+type migrateEventsSyncCtx struct {
+	sem  chan struct{}
+	errs chan error
+	wg   sync.WaitGroup
+}
+
+func newMigrateEventsSyncCtx(totalToProcess int) *migrateEventsSyncCtx {
+	ctx := &migrateEventsSyncCtx{
+		sem:  make(chan struct{}, MaxConcurrentRequests),
+		errs: make(chan error, MaxConcurrentRequests+1),
+	}
+	ctx.wg.Add(totalToProcess)
+	return ctx
+}
+
+func (ctx *migrateEventsSyncCtx) checkForErrors() (exit bool, err error) {
+	select {
+	case err = <-ctx.errs:
+		exit = true
+	default:
+	}
+	return
+}
+
+func (ctx *migrateEventsSyncCtx) waitForAllMigrations(
+	mainErr error,
+	stateDbTxn *leveldb.Transaction,
+) error {
+	ctx.wg.Wait()
+	close(ctx.errs)
+
+	for freshErr := range ctx.errs {
+		// NB: avoid non-errs overriding actual errs
+		if freshErr != nil {
+			mainErr = freshErr
+		}
+	}
+
+	if mainErr == nil {
+		log.Println("done migrating events with no errors")
+		stateDbTxn.Commit()
+	} else {
+		log.Println("encountered error migrating events")
+		stateDbTxn.Discard()
+	}
+
+	return mainErr
+}
+
+func (ctx *migrateEventsSyncCtx) reportErr(err error) {
+	ctx.errs <- err
+}
+
+func (ctx *migrateEventsSyncCtx) migrateHeight(
+	height int,
+	stateDbTxn *leveldb.Transaction,
+	blockStoreDb *leveldb.DB,
+	maspIndexerClient *MaspIndexerClient,
+	continueMigrating bool,
+) {
+	ctx.sem <- struct{}{}
+
+	go ctx.migrateHeightTask(
+		height,
+		stateDbTxn,
+		blockStoreDb,
+		maspIndexerClient,
+		continueMigrating,
+	)
+}
+
+func (ctx *migrateEventsSyncCtx) releaseSem() {
+	<-ctx.sem
+	ctx.wg.Done()
+}
+
+func (ctx *migrateEventsSyncCtx) migrateHeightTask(
+	height int,
+	stateDbTxn *leveldb.Transaction,
+	blockStoreDb *leveldb.DB,
+	maspIndexerClient *MaspIndexerClient,
+	continueMigrating bool,
+) {
+	defer ctx.releaseSem()
+
+	log.Println("began processing events in block", height)
+
+	key := []byte(fmt.Sprintf("abciResponsesKey:%d", height))
+	value, err := stateDbTxn.Get(key, &opt.ReadOptions{})
+	if err != nil {
+		ctx.reportErr(fmt.Errorf("failed to read block %d from state db: %w", height, err))
+		return
+	}
+
+	log.Println("read events of block", height, "from state db")
+
+	containsOldMaspDataRefs := false
+	containsNewMaspDataRefs := false
+
+	abciResponses := new(cmtstate.ABCIResponses)
+	if err := abciResponses.Unmarshal(value); err != nil {
+		ctx.reportErr(fmt.Errorf("failed to unmarshal abci responses from state db: %w", err))
+		return
+	}
+
+	for i := 0; i < len(abciResponses.EndBlock.Events); i++ {
+		switch abciResponses.EndBlock.Events[i].Type {
+		case "tx/applied":
+			for e := 0; e < len(abciResponses.EndBlock.Events[i].Attributes); e++ {
+				if abciResponses.EndBlock.Events[i].Attributes[e].Key == "masp_data_refs" {
+					abciResponses.EndBlock.Events[i].Attributes = swapRemove(
+						abciResponses.EndBlock.Events[i].Attributes,
+						e,
+					)
+					containsOldMaspDataRefs = true
+				}
+			}
+		case "masp/transfer", "masp/fee-payment":
+			if !continueMigrating {
+				log.Println("this db has already been migrated")
+				ctx.reportErr(nil)
+				return
+			}
+			containsNewMaspDataRefs = true
+		}
+	}
+
+	if !containsOldMaspDataRefs {
+		log.Println("no masp data refs found in block", height, "to migrate")
+		return
+	}
+	if containsNewMaspDataRefs {
+		ctx.reportErr(fmt.Errorf("block %d has old and new masp data refs", height))
+		return
+	}
+
+	log.Println("querying events of block", height, "from masp indexer")
+
+	maspTxs, err := maspIndexerClient.BlockHeight(height)
+	if err != nil {
+		ctx.reportErr(err)
+		return
+	}
+
+	log.Println("loading block data of height", height, "from blockstore db")
+
+	namadaTxs, err := loadNamadaTxsWithMaspData(blockStoreDb, height, maspTxs)
+	if err != nil {
+		ctx.reportErr(err)
+		return
+	}
+
+	log.Println(
+		"begun migrating events of block",
+		height,
+		"which has",
+		len(maspTxs),
+		"tx batches with masp txs",
+	)
+
+	for i := 0; i < len(maspTxs); i++ {
+		log.Println(
+			"begun processing masp txs in tx batch",
+			maspTxs[i].BlockIndex,
+			"of block",
+			height,
+		)
+
+		for j := 0; j < len(maspTxs[i].Batch); j++ {
+			maspTxId, err := computeMaspTxId(maspTxs[i].Batch[j].Bytes)
+			if err != nil {
+				ctx.reportErr(fmt.Errorf("block height %d failure: %w", height, err))
+				return
+			}
+
+			maspSections, err := locateMaspTxIdsInMaspSections(
+				namadaTxs[maspTxs[i].BlockIndex],
+			)
+			if err != nil {
+				ctx.reportErr(fmt.Errorf("block height %d failure: %w", height, err))
+				return
+			}
+
+			log.Println(
+				"located all masp sections of block",
+				height,
+				"at index",
+				maspTxs[i].BlockIndex,
+			)
+
+			var sectionEventValue string
+
+			if sec, ok := maspSections[maspTxId]; ok {
+				hexHash := strings.ToUpper(hex.EncodeToString(sec.Hash[:]))
+
+				if sec.Ibc {
+					sectionEventValue = fmt.Sprintf(
+						`{"IbcData":"%s"}`,
+						hexHash,
+					)
+
+					log.Println("found ibc data section", hexHash, "at height", height, "with masp tx")
+				} else {
+					var buf bytes.Buffer
+
+					err = json.NewEncoder(&buf).Encode(&sec.Hash)
+					if err != nil {
+						ctx.reportErr(fmt.Errorf(
+							"block height %d failure: failed to encode masp tx id to json: %w",
+							height,
+							err,
+						))
+						return
+					}
+
+					encoded := buf.String()
+					if len(encoded) > 0 && encoded[len(encoded)-1] == '\n' {
+						encoded = encoded[:len(encoded)-1]
+					}
+
+					sectionEventValue = fmt.Sprintf(
+						`{"MaspSection":%s}`,
+						encoded,
+					)
+
+					log.Println("found masp section", hexHash, "at height", height)
+				}
+			} else {
+				ctx.reportErr(fmt.Errorf(
+					"block height %d failure: unable to locate masp tx %v",
+					height,
+					maspTxId,
+				))
+				return
+			}
+
+			abciResponses.EndBlock.Events = append(
+				abciResponses.EndBlock.Events,
+				types.Event{
+					Type: "masp/transfer",
+					Attributes: []types.EventAttribute{
+						{
+							Key:   "height",
+							Value: strconv.Itoa(height),
+							Index: true,
+						},
+						{
+							Key: "indexed-tx",
+							Value: fmt.Sprintf(
+								`{"block_height":%d,"block_index":%d,"batch_index":%d}`,
+								height,
+								maspTxs[i].BlockIndex,
+								maspTxs[i].Batch[j].MaspTxIndex,
+							),
+							Index: true,
+						},
+						{
+							Key:   "section",
+							Value: sectionEventValue,
+							Index: true,
+						},
+						{
+							Key:   "event-level",
+							Value: "tx",
+							Index: true,
+						},
+					},
+				},
+			)
+		}
+	}
+
+	log.Println("replaced all event data of block", height)
+
+	value, err = abciResponses.Marshal()
+	if err != nil {
+		ctx.reportErr(fmt.Errorf("failed to marshal abci responses: %w", err))
+		return
+	}
+
+	log.Println("storing changes of block", height, "in db")
+
+	err = stateDbTxn.Put(key, value, new(opt.WriteOptions))
+	if err != nil {
+		ctx.reportErr(fmt.Errorf("failed to write migrated abci responses to db: %w", err))
+	}
+
+	log.Println("migrated all events of block", height)
 }
