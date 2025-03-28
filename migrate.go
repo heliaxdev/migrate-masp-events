@@ -13,6 +13,7 @@ import (
 	"github.com/cometbft/cometbft/abci/types"
 	cmtstate "github.com/cometbft/cometbft/proto/tendermint/state"
 
+	"github.com/heliaxdev/migrate-masp-events/namada"
 	namproto "github.com/heliaxdev/migrate-masp-events/proto/types"
 )
 
@@ -142,7 +143,7 @@ func migrateEvents(stateDb, blockStoreDb *leveldb.DB, maspIndexerUrl string) err
 				return
 			}
 
-			//namadaTxs, err := loadNamadaTxs(blockStoreDb, height, maspTxs)
+			//namadaTxs, err := loadNamadaTxsWithMaspData(blockStoreDb, height, maspTxs)
 			//if err != nil {
 			//	errs <- err
 			//	return
@@ -248,8 +249,12 @@ func decodeNamadaTxProto(protoBytes []byte) ([]byte, error) {
 	return tx.Data, nil
 }
 
-func loadNamadaTxs(blockStoreDb *leveldb.DB, height int, maspTxs []Transaction) ([][]byte, error) {
-	var txs [][]byte
+func loadNamadaTxsWithMaspData(
+	blockStoreDb *leveldb.DB,
+	height int,
+	maspTxs []Transaction,
+) (map[int][]byte, error) {
+	txs := make(map[int][]byte)
 
 	for i := 0; i < len(maspTxs); i++ {
 		block, err := loadBlock(blockStoreDb, height)
@@ -267,23 +272,32 @@ func loadNamadaTxs(blockStoreDb *leveldb.DB, height int, maspTxs []Transaction) 
 			)
 		}
 
-		txs = append(txs, namadaTx)
+		txs[maspTxs[i].BlockIndex] = namadaTx
 	}
 
 	return txs, nil
 }
 
-func locateMaspTxIdsInMaspSections(namadaTxBorshData []byte) ([][32]byte, error) {
-	maspTxIds, err := locateMaspTxIdsInMaspSectionsAux(namadaTxBorshData)
+func locateMaspTxIdsInMaspSections(
+	namadaTxBorshData []byte,
+) (map[[32]byte]namada.MaspTxSection, error) {
+	maspTxIds, err := namada.LocateMaspTxIdsInNamTx(namadaTxBorshData)
 	if err != nil {
 		return nil, fmt.Errorf(
-			"unable to localte masp tx ids: failed to parse borsh encoded namada tx: %w",
+			"unable to locate masp tx ids: %w",
 			err,
 		)
 	}
 	return maspTxIds, nil
 }
 
-func locateMaspTxIdsInMaspSectionsAux(namadaTxBorshData []byte) ([][32]byte, error) {
-	return nil, fmt.Errorf("TODO")
+func computeMaspTxId(maspTxBorshData []byte) ([32]byte, error) {
+	maspTxId, err := namada.ComputeMaspTxId(maspTxBorshData)
+	if err != nil {
+		err = fmt.Errorf(
+			"unable to compute masp tx id: %w",
+			err,
+		)
+	}
+	return maspTxId, nil
 }

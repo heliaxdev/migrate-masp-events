@@ -1,0 +1,13 @@
+[package]
+name = "parse"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+namada_core = "0.48.0"
+namada_ibc = "0.48.0"
+namada_token = "0.48.0"
+namada_tx = "0.48.0"
