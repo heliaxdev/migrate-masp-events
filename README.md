@@ -2,7 +2,7 @@
 
 Tool developed to migrate MASP events produced by a Namada node
 on version [`v1.1.4`](https://github.com/anoma/namada/releases/tag/v1.1.4)
-to the event format produce by a node on the next release. Events should be
+to the event format produced by a node on the next release. Events should be
 migrated by node operators who intend to expose their RPC servers to
 MASP indexers.
 
