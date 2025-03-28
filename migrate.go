@@ -22,6 +22,7 @@ import (
 )
 
 type argsMigrate struct {
+	ContinueMigrating      bool
 	CometHome              string
 	MaspIndexer            string
 	StartHeight, EndHeight int
@@ -58,6 +59,12 @@ func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
 				0,
 				"block height to stop migrations (default is last committed height)",
 			)
+			flags.BoolVar(
+				&args.ContinueMigrating,
+				"continue-migrating",
+				false,
+				"continue migrating the db even if we detect it's already been migrated",
+			)
 		},
 		Entrypoint: func(iArgs any) error {
 			args := iArgs.(*argsMigrate)
@@ -80,6 +87,7 @@ func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
 				args.MaspIndexer,
 				args.StartHeight,
 				args.EndHeight,
+				args.ContinueMigrating,
 			)
 		},
 	}
@@ -89,6 +97,7 @@ func migrateEvents(
 	stateDb, blockStoreDb *leveldb.DB,
 	maspIndexerUrl string,
 	startHeight, endHeight int,
+	continueMigrating bool,
 ) error {
 	if maspIndexerUrl == "" {
 		return fmt.Errorf("masp indexer url was not set")
@@ -168,7 +177,8 @@ func migrateEvents(
 
 			log.Println("read events of block", height, "from state db")
 
-			containsMaspDataRefs := false
+			containsOldMaspDataRefs := false
+			containsNewMaspDataRefs := false
 
 			abciResponses := new(cmtstate.ABCIResponses)
 			if err := abciResponses.Unmarshal(value); err != nil {
@@ -185,18 +195,25 @@ func migrateEvents(
 								abciResponses.EndBlock.Events[i].Attributes,
 								e,
 							)
-							containsMaspDataRefs = true
+							containsOldMaspDataRefs = true
 						}
 					}
 				case "masp/transfer", "masp/fee-payment":
-					log.Println("this db has already been migrated")
-					reportErr(nil)
-					return
+					if !continueMigrating {
+						log.Println("this db has already been migrated")
+						reportErr(nil)
+						return
+					}
+					containsNewMaspDataRefs = true
 				}
 			}
 
-			if !containsMaspDataRefs {
-				log.Println("no masp data refs found in block", height)
+			if !containsOldMaspDataRefs {
+				log.Println("no masp data refs found in block", height, "to migrate")
+				return
+			}
+			if containsNewMaspDataRefs {
+				reportErr(fmt.Errorf("block %d has old and new masp data refs", height))
 				return
 			}
 
