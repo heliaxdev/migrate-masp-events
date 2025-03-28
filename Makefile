@@ -11,7 +11,7 @@ fmt:
 	go fmt github.com/heliaxdev/migrate-masp-events/proto/types
 
 $(BIN): $(RUSTLIB)
-	go build
+	env CGO_ENABLED=1 go build
 
 $(RUSTLIB):
 	cd namada/parse && cargo build --release
