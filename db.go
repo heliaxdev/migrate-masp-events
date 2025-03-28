@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/syndtr/goleveldb/leveldb"
@@ -14,6 +15,17 @@ import (
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	cmt "github.com/cometbft/cometbft/types"
 )
+
+func dirExists(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return info.IsDir(), nil
+}
 
 func openStateDb(cometHome string) (*leveldb.DB, error) {
 	return openDb(cometHome, "state.db")
@@ -29,8 +41,24 @@ func openDb(cometHome, dbName string) (*leveldb.DB, error) {
 	}
 
 	dbPath := filepath.Join(cometHome, "data", dbName)
+	ok, err := dirExists(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to open db %s in %s: %w",
+			dbName,
+			cometHome,
+			err,
+		)
+	}
+	if !ok {
+		return nil, fmt.Errorf(
+			"failed to open db %s in %s: leveldb db does not exist",
+			dbName,
+			cometHome,
+		)
+	}
 
-	db, err := leveldb.OpenFile(dbPath, nil)
+	db, err := leveldb.OpenFile(dbPath, &opt.Options{ErrorIfMissing: true})
 	if err != nil {
 		return nil, fmt.Errorf(
 			"failed to open db %s in %s: %w",
