@@ -14,7 +14,6 @@ import (
 	cmtstate "github.com/cometbft/cometbft/proto/tendermint/state"
 
 	namproto "github.com/heliaxdev/migrate-masp-events/proto/types"
-	_ "github.com/heliaxdev/migrate-masp-events/tx"
 )
 
 type argsMigrate struct {
