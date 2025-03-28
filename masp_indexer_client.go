@@ -17,8 +17,8 @@ type MaspIndexerClient struct {
 }
 
 type TransactionSlot struct {
-	MaspTxIndex int      `json:"masp_tx_index"`
-	MaspTxId    [32]byte `json:"bytes"` // first 32 bytes of borsh data contain masp tx id
+	MaspTxIndex int    `json:"masp_tx_index"`
+	Bytes       []byte `json:"bytes"`
 }
 
 type Transaction struct {
