@@ -13,6 +13,10 @@ available in your `PATH`. The resulting binary is `migrate-masp-events`.
 
 ## Migration instructions
 
+First and foremost, **make sure you are not running the migrations
+from a pruned CometBFT node** (such as a state synced node). This is
+important, as the migrations require access to historical tx data.
+
 1. Stop the Namada full node on `v1.1.4`
 2. Create a backup of the CometBFT `data` directory
     - In practice, only the `state.db` needs to be backed up,
