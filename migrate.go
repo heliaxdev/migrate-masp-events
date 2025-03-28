@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"strconv"
 	"sync"
 
@@ -137,6 +138,8 @@ func migrateEvents(
 				wg.Done()
 			}()
 
+			log.Println("began processing events in block", height)
+
 			key := []byte(fmt.Sprintf("abciResponsesKey:%d", height))
 			value, err := stateDb.Get(key, &opt.ReadOptions{})
 			if err != nil {
@@ -165,13 +168,14 @@ func migrateEvents(
 						}
 					}
 				case "masp/transfer", "masp/fee-payment":
-					// NB: this db has already been migrated
+					log.Println("this db has already been migrated")
 					errs <- nil
 					return
 				}
 			}
 
 			if !containsMaspDataRefs {
+				log.Println("no masp data refs found in block", height)
 				return
 			}
 
@@ -206,11 +210,15 @@ func migrateEvents(
 					var sectionEventValue string
 
 					if sec, ok := maspSections[maspTxId]; ok {
+						hexHash := hex.EncodeToString(sec.Hash[:])
+
 						if sec.Ibc {
 							sectionEventValue = fmt.Sprintf(
 								`{"IbcData":"%s"}`,
-								hex.EncodeToString(sec.Hash[:]),
+								hexHash,
 							)
+
+							log.Println("found ibc data section", hexHash, "at height", height, "with masp tx")
 						} else {
 							var buf bytes.Buffer
 
@@ -223,8 +231,10 @@ func migrateEvents(
 
 							sectionEventValue = fmt.Sprintf(
 								`{"MaspSection":%s}`,
-								buf,
+								buf.String(),
 							)
+
+							log.Println("found masp section", hexHash, "at height", height)
 						}
 					} else {
 						errs <- fmt.Errorf(
@@ -281,6 +291,8 @@ func migrateEvents(
 			if err != nil {
 				errs <- fmt.Errorf("failed to write migrated abci responses to db: %w", err)
 			}
+
+			log.Println("migrated all events of block", height)
 		}(height)
 	}
 
@@ -294,6 +306,12 @@ func migrateEvents(
 			mainErr = freshErr
 		}
 	default:
+	}
+
+	if mainErr == nil {
+		log.Println("done migrating events with no errors")
+	} else {
+		log.Println("encountered error migrating events")
 	}
 
 	return mainErr
