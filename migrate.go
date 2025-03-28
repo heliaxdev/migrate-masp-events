@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/syndtr/goleveldb/leveldb"
@@ -118,9 +119,28 @@ func migrateEvents(
 
 	wg := &sync.WaitGroup{}
 	sem := make(chan struct{}, MaxConcurrentRequests)
-	errs := make(chan error, 1)
+	errs := make(chan error, MaxConcurrentRequests+1)
+	reportErr := func(e error) {
+		errs <- e
+	}
 
 	var mainErr error
+
+	txn, err := stateDb.OpenTransaction()
+	if err != nil {
+		return fmt.Errorf("failed to begin state db transaction")
+	}
+
+	log.Println("migrating events starting from block", startHeight, "to", endHeight)
+
+	totalToProcess := endHeight - startHeight + 1
+
+	if totalToProcess > 0 {
+		wg.Add(totalToProcess)
+		log.Println("processing a total of", totalToProcess, "blocks")
+	} else {
+		log.Println("no blocks to process")
+	}
 
 	for height := startHeight; height <= endHeight; height++ {
 		select {
@@ -129,7 +149,6 @@ func migrateEvents(
 		default:
 		}
 
-		wg.Add(1)
 		sem <- struct{}{}
 
 		go func(height int) {
@@ -141,17 +160,19 @@ func migrateEvents(
 			log.Println("began processing events in block", height)
 
 			key := []byte(fmt.Sprintf("abciResponsesKey:%d", height))
-			value, err := stateDb.Get(key, &opt.ReadOptions{})
+			value, err := txn.Get(key, &opt.ReadOptions{})
 			if err != nil {
-				errs <- fmt.Errorf("failed to read block %d from state db: %w", height, err)
+				reportErr(fmt.Errorf("failed to read block %d from state db: %w", height, err))
 				return
 			}
+
+			log.Println("read events of block", height, "from state db")
 
 			containsMaspDataRefs := false
 
 			abciResponses := new(cmtstate.ABCIResponses)
 			if err := abciResponses.Unmarshal(value); err != nil {
-				errs <- fmt.Errorf("failed to unmarshal abci responses from state db: %w", err)
+				reportErr(fmt.Errorf("failed to unmarshal abci responses from state db: %w", err))
 				return
 			}
 
@@ -169,7 +190,7 @@ func migrateEvents(
 					}
 				case "masp/transfer", "masp/fee-payment":
 					log.Println("this db has already been migrated")
-					errs <- nil
+					reportErr(nil)
 					return
 				}
 			}
@@ -179,23 +200,42 @@ func migrateEvents(
 				return
 			}
 
+			log.Println("querying events of block", height, "from masp indexer")
+
 			maspTxs, err := maspIndexerClient.BlockHeight(height)
 			if err != nil {
-				errs <- err
+				reportErr(err)
 				return
 			}
+
+			log.Println("loading block data of height", height, "from blockstore db")
 
 			namadaTxs, err := loadNamadaTxsWithMaspData(blockStoreDb, height, maspTxs)
 			if err != nil {
-				errs <- err
+				reportErr(err)
 				return
 			}
 
+			log.Println(
+				"begun migrating events of block",
+				height,
+				"which has",
+				len(maspTxs),
+				"tx batches with masp txs",
+			)
+
 			for i := 0; i < len(maspTxs); i++ {
+				log.Println(
+					"begun processing masp txs in tx batch",
+					maspTxs[i].BlockIndex,
+					"of block",
+					height,
+				)
+
 				for j := 0; j < len(maspTxs[i].Batch); j++ {
 					maspTxId, err := computeMaspTxId(maspTxs[i].Batch[j].Bytes)
 					if err != nil {
-						errs <- fmt.Errorf("block height %d failure: %w", height, err)
+						reportErr(fmt.Errorf("block height %d failure: %w", height, err))
 						return
 					}
 
@@ -203,14 +243,21 @@ func migrateEvents(
 						namadaTxs[maspTxs[i].BlockIndex],
 					)
 					if err != nil {
-						errs <- fmt.Errorf("block height %d failure: %w", height, err)
+						reportErr(fmt.Errorf("block height %d failure: %w", height, err))
 						return
 					}
+
+					log.Println(
+						"located all masp sections of block",
+						height,
+						"at index",
+						maspTxs[i].BlockIndex,
+					)
 
 					var sectionEventValue string
 
 					if sec, ok := maspSections[maspTxId]; ok {
-						hexHash := hex.EncodeToString(sec.Hash[:])
+						hexHash := strings.ToUpper(hex.EncodeToString(sec.Hash[:]))
 
 						if sec.Ibc {
 							sectionEventValue = fmt.Sprintf(
@@ -222,26 +269,34 @@ func migrateEvents(
 						} else {
 							var buf bytes.Buffer
 
-							err = json.NewEncoder(&buf).Encode(sec.Hash)
-							errs <- fmt.Errorf(
-								"block height %d failure: failed to encode masp tx id to json: %w",
-								height,
-								err,
-							)
+							err = json.NewEncoder(&buf).Encode(&sec.Hash)
+							if err != nil {
+								reportErr(fmt.Errorf(
+									"block height %d failure: failed to encode masp tx id to json: %w",
+									height,
+									err,
+								))
+								return
+							}
+
+							encoded := buf.String()
+							if len(encoded) > 0 && encoded[len(encoded)-1] == '\n' {
+								encoded = encoded[:len(encoded)-1]
+							}
 
 							sectionEventValue = fmt.Sprintf(
 								`{"MaspSection":%s}`,
-								buf.String(),
+								encoded,
 							)
 
 							log.Println("found masp section", hexHash, "at height", height)
 						}
 					} else {
-						errs <- fmt.Errorf(
+						reportErr(fmt.Errorf(
 							"block height %d failure: unable to locate masp tx %v",
 							height,
 							maspTxId,
-						)
+						))
 						return
 					}
 
@@ -281,15 +336,19 @@ func migrateEvents(
 				}
 			}
 
+			log.Println("replaced all event data of block", height)
+
 			value, err = abciResponses.Marshal()
 			if err != nil {
-				errs <- fmt.Errorf("failed to marshal abci responses: %w", err)
+				reportErr(fmt.Errorf("failed to marshal abci responses: %w", err))
 				return
 			}
 
-			err = stateDb.Put(key, value, new(opt.WriteOptions))
+			log.Println("storing changes of block", height, "in db")
+
+			err = txn.Put(key, value, new(opt.WriteOptions))
 			if err != nil {
-				errs <- fmt.Errorf("failed to write migrated abci responses to db: %w", err)
+				reportErr(fmt.Errorf("failed to write migrated abci responses to db: %w", err))
 			}
 
 			log.Println("migrated all events of block", height)
@@ -297,21 +356,22 @@ func migrateEvents(
 	}
 
 	wg.Wait()
+	close(errs)
 
 	// NB: one last attempt at getting errors
-	select {
-	case freshErr := <-errs:
+	for freshErr := range errs {
 		// NB: avoid non-errs overriding actual errs
 		if freshErr != nil {
 			mainErr = freshErr
 		}
-	default:
 	}
 
 	if mainErr == nil {
 		log.Println("done migrating events with no errors")
+		txn.Commit()
 	} else {
 		log.Println("encountered error migrating events")
+		txn.Discard()
 	}
 
 	return mainErr
@@ -336,14 +396,14 @@ func loadNamadaTxsWithMaspData(
 	height int,
 	maspTxs []Transaction,
 ) (map[int][]byte, error) {
+	block, err := loadBlock(blockStoreDb, height)
+	if err != nil {
+		return nil, err
+	}
+
 	txs := make(map[int][]byte)
 
 	for i := 0; i < len(maspTxs); i++ {
-		block, err := loadBlock(blockStoreDb, height)
-		if err != nil {
-			return nil, err
-		}
-
 		namadaTx, err := decodeNamadaTxProto(block.Data.Txs[maspTxs[i].BlockIndex])
 		if err != nil {
 			return nil, fmt.Errorf(
@@ -356,6 +416,8 @@ func loadNamadaTxsWithMaspData(
 
 		txs[maspTxs[i].BlockIndex] = namadaTx
 	}
+
+	log.Println("got all namada txs of block", height)
 
 	return txs, nil
 }

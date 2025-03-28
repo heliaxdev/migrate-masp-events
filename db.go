@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -28,14 +29,14 @@ func dirExists(path string) (bool, error) {
 }
 
 func openStateDb(cometHome string) (*leveldb.DB, error) {
-	return openDb(cometHome, "state.db")
+	return openDb(cometHome, "state.db", false)
 }
 
 func openBlockStoreDb(cometHome string) (*leveldb.DB, error) {
-	return openDb(cometHome, "blockstore.db")
+	return openDb(cometHome, "blockstore.db", true)
 }
 
-func openDb(cometHome, dbName string) (*leveldb.DB, error) {
+func openDb(cometHome, dbName string, readOnly bool) (*leveldb.DB, error) {
 	if cometHome == "" {
 		return nil, fmt.Errorf("no cometbft home dir provided as arg")
 	}
@@ -58,7 +59,10 @@ func openDb(cometHome, dbName string) (*leveldb.DB, error) {
 		)
 	}
 
-	db, err := leveldb.OpenFile(dbPath, &opt.Options{ErrorIfMissing: true})
+	db, err := leveldb.OpenFile(dbPath, &opt.Options{
+		ErrorIfMissing: true,
+		ReadOnly:       readOnly,
+	})
 	if err != nil {
 		return nil, fmt.Errorf(
 			"failed to open db %s in %s: %w",
@@ -83,6 +87,13 @@ func loadBlock(blockStore *leveldb.DB, height int) (*cmt.Block, error) {
 	pbb := new(cmtproto.Block)
 	buf := make([]byte, 0, 4096)
 
+	log.Println(
+		"reading",
+		blockMeta.BlockID.PartSetHeader.Total,
+		"parts of block",
+		height,
+	)
+
 	for i := 0; i < int(blockMeta.BlockID.PartSetHeader.Total); i++ {
 		part, err := loadBlockPart(blockStore, height, i)
 		if err != err {
@@ -90,6 +101,8 @@ func loadBlock(blockStore *leveldb.DB, height int) (*cmt.Block, error) {
 		}
 		buf = append(buf, part.Bytes...)
 	}
+
+	log.Println("unmarshaling block", height)
 
 	err = proto.Unmarshal(buf, pbb)
 	if err != nil {
@@ -109,11 +122,15 @@ func loadBlock(blockStore *leveldb.DB, height int) (*cmt.Block, error) {
 		)
 	}
 
+	log.Println("all data of block", height, "retrieved")
+
 	return block, nil
 }
 
 func loadBlockPart(blockStore *leveldb.DB, height, index int) (*cmt.Part, error) {
 	pbpart := new(cmtproto.Part)
+
+	log.Println("reading part", index, "of block", height)
 
 	bz, err := blockStore.Get(
 		[]byte(fmt.Sprintf("P:%d:%d", height, index)),
@@ -147,6 +164,8 @@ func loadBlockPart(blockStore *leveldb.DB, height, index int) (*cmt.Part, error)
 			err,
 		)
 	}
+
+	log.Println("got part", index, "of block", height)
 
 	return part, nil
 }
