@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"slices"
@@ -143,14 +146,60 @@ func migrateEvents(stateDb, blockStoreDb *leveldb.DB, maspIndexerUrl string) err
 				return
 			}
 
-			//namadaTxs, err := loadNamadaTxsWithMaspData(blockStoreDb, height, maspTxs)
-			//if err != nil {
-			//	errs <- err
-			//	return
-			//}
+			namadaTxs, err := loadNamadaTxsWithMaspData(blockStoreDb, height, maspTxs)
+			if err != nil {
+				errs <- err
+				return
+			}
 
 			for i := 0; i < len(maspTxs); i++ {
 				for j := 0; j < len(maspTxs[i].Batch); j++ {
+					maspTxId, err := computeMaspTxId(maspTxs[i].Batch[j].Bytes)
+					if err != nil {
+						errs <- fmt.Errorf("block height %s failure: %w", heightStr, err)
+						return
+					}
+
+					maspSections, err := locateMaspTxIdsInMaspSections(
+						namadaTxs[maspTxs[i].BlockIndex],
+					)
+					if err != nil {
+						errs <- fmt.Errorf("block height %s failure: %w", heightStr, err)
+						return
+					}
+
+					var sectionEventValue string
+
+					if sec, ok := maspSections[maspTxId]; ok {
+						if sec.Ibc {
+							sectionEventValue = fmt.Sprintf(
+								`{"IbcData":"%s"}`,
+								hex.EncodeToString(sec.Hash[:]),
+							)
+						} else {
+							var buf bytes.Buffer
+
+							err = json.NewEncoder(&buf).Encode(sec.Hash)
+							errs <- fmt.Errorf(
+								"block height %s failure: failed to encode masp tx id to json: %w",
+								heightStr,
+								err,
+							)
+
+							sectionEventValue = fmt.Sprintf(
+								`{"MaspSection":%s}`,
+								buf,
+							)
+						}
+					} else {
+						errs <- fmt.Errorf(
+							"block height %s failure: unable to locate masp tx %v",
+							heightStr,
+							maspTxId,
+						)
+						return
+					}
+
 					abciResponses.EndBlock.Events = append(
 						abciResponses.EndBlock.Events,
 						types.Event{
@@ -171,29 +220,9 @@ func migrateEvents(stateDb, blockStoreDb *leveldb.DB, maspIndexerUrl string) err
 									),
 									Index: true,
 								},
-								// TODO:
-								// - need to open leveldb db that contains block responses (with tx data)
-								// - query the namada tx at the given block height and block index
-								// - use protobuf to decode the tx bytes. then, borsh decode the tx
-								// 	  - grab the `MaspTxId` from the data fetched from the masp indexer
-								//    - look for a matching `Section::MaspTx`. if it is not present
-								//    in the tx, then it is an ibc shielding (`{"IbcData":"AABBCC010203..."}`);
-								//    otherwise, it is an internal masp tx (`{"MaspSection":[1,2,3,...]}`).
-								//       - still need to locate the data section containing the ibc shielding,
-								//       because its hash will be stored in the event
-								//    - look at c# code for inspiration
-								//       - https://github.com/heliaxdev/bitcoin-suisse-tx/blob/main/Tx.cs
-								//
-								//   ...
-								//
-								// - alternatively, we could tag everything as "MaspSection", and inject a new
-								//   masp tx section into the namada txs...
 								{
-									Key: "section",
-									Value: fmt.Sprintf(
-										`{"MaspSection":%s}`, /* TODO: could also be IBC */
-										"",                   /* TODO */
-									),
+									Key:   "section",
+									Value: sectionEventValue,
 									Index: true,
 								},
 								{
