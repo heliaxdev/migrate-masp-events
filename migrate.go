@@ -92,20 +92,19 @@ func migrateEvents(
 		return fmt.Errorf("masp indexer url was not set")
 	}
 
+	if endHeight == 0 {
+		lastCometHeight, err := loadLastDbHeight(blockStoreDb)
+		if err != nil {
+			return err
+		}
+		endHeight = lastCometHeight
+	}
+
 	switch {
 	case startHeight <= 0:
 		return fmt.Errorf("start height cannot be lower than or equal to 0")
 	case endHeight < 0:
 		return fmt.Errorf("end height cannot be lower than 0")
-	case endHeight == 0:
-		lastCometHeight, err := loadLastDbHeight(stateDb)
-		if err != nil {
-			return err
-		}
-
-		endHeight = lastCometHeight
-
-		fallthrough
 	case startHeight > endHeight:
 		return fmt.Errorf(
 			"start height (%d) is greater than end height (%d)",
