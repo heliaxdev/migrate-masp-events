@@ -5,6 +5,7 @@ go 1.24.0
 require (
 	github.com/cometbft/cometbft v0.37.15
 	github.com/cosmos/gogoproto v1.7.0
+	github.com/segmentio/encoding v0.4.1
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
 )
 
@@ -18,6 +19,7 @@ require (
 	github.com/petermattis/goid v0.0.0-20240813172612-4fcff4a6cae7 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/sasha-s/go-deadlock v0.3.5 // indirect
+	github.com/segmentio/asm v1.1.3 // indirect
 	golang.org/x/crypto v0.31.0 // indirect
 	golang.org/x/net v0.33.0 // indirect
 	golang.org/x/sys v0.28.0 // indirect

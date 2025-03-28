@@ -2,9 +2,10 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"github.com/segmentio/encoding/json"
 )
 
 const MaxConcurrentRequests = 100

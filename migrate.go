@@ -3,13 +3,14 @@ package main
 import (
 	"bytes"
 	"encoding/hex"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/segmentio/encoding/json"
 
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"

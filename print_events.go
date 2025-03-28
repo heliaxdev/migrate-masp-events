@@ -2,12 +2,13 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"slices"
 	"strconv"
+
+	"github.com/segmentio/encoding/json"
 
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
