@@ -115,6 +115,15 @@ func migrateEvents(
 		)
 	}
 
+	log.Println("migrating events starting from block", startHeight, "to", endHeight)
+	totalToProcess := endHeight - startHeight + 1
+	if totalToProcess > 0 {
+		log.Println("processing a total of", totalToProcess, "blocks")
+	} else {
+		log.Println("no blocks to process")
+		return nil
+	}
+
 	maspIndexerClient := NewMaspIndexerClient(maspIndexerUrl)
 
 	wg := &sync.WaitGroup{}
@@ -131,16 +140,7 @@ func migrateEvents(
 		return fmt.Errorf("failed to begin state db transaction")
 	}
 
-	log.Println("migrating events starting from block", startHeight, "to", endHeight)
-
-	totalToProcess := endHeight - startHeight + 1
-
-	if totalToProcess > 0 {
-		wg.Add(totalToProcess)
-		log.Println("processing a total of", totalToProcess, "blocks")
-	} else {
-		log.Println("no blocks to process")
-	}
+	wg.Add(totalToProcess)
 
 	for height := startHeight; height <= endHeight; height++ {
 		select {
