@@ -6,12 +6,11 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"slices"
+	"strconv"
 	"sync"
 
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
-	"github.com/syndtr/goleveldb/leveldb/util"
 
 	"github.com/cometbft/cometbft/abci/types"
 	cmtstate "github.com/cometbft/cometbft/proto/tendermint/state"
@@ -21,8 +20,9 @@ import (
 )
 
 type argsMigrate struct {
-	CometHome   string
-	MaspIndexer string
+	CometHome              string
+	MaspIndexer            string
+	StartHeight, EndHeight int
 }
 
 func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
@@ -44,6 +44,18 @@ func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
 				"",
 				"url of masp indexer (e.g. https://bing.bong/api/v1)",
 			)
+			flags.IntVar(
+				&args.StartHeight,
+				"start",
+				1,
+				"block height to start migrations",
+			)
+			flags.IntVar(
+				&args.EndHeight,
+				"end",
+				0,
+				"block height to stop migrations (default is last committed height)",
+			)
 		},
 		Entrypoint: func(iArgs any) error {
 			args := iArgs.(*argsMigrate)
@@ -60,20 +72,49 @@ func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
 			}
 			defer blockStoreDb.Close()
 
-			return migrateEvents(stateDb, blockStoreDb, args.MaspIndexer)
+			return migrateEvents(
+				stateDb,
+				blockStoreDb,
+				args.MaspIndexer,
+				args.StartHeight,
+				args.EndHeight,
+			)
 		},
 	}
 }
 
-func migrateEvents(stateDb, blockStoreDb *leveldb.DB, maspIndexerUrl string) error {
+func migrateEvents(
+	stateDb, blockStoreDb *leveldb.DB,
+	maspIndexerUrl string,
+	startHeight, endHeight int,
+) error {
 	if maspIndexerUrl == "" {
 		return fmt.Errorf("masp indexer url was not set")
 	}
 
-	maspIndexerClient := NewMaspIndexerClient(maspIndexerUrl)
+	switch {
+	case startHeight <= 0:
+		return fmt.Errorf("start height cannot be lower than or equal to 0")
+	case endHeight < 0:
+		return fmt.Errorf("end height cannot be lower than 0")
+	case endHeight == 0:
+		lastCometHeight, err := loadLastDbHeight(stateDb)
+		if err != nil {
+			return err
+		}
 
-	iter := stateDb.NewIterator(util.BytesPrefix([]byte("abciResponsesKey:")), &opt.ReadOptions{})
-	defer iter.Release()
+		endHeight = lastCometHeight
+
+		fallthrough
+	case startHeight > endHeight:
+		return fmt.Errorf(
+			"start height (%d) is greater than end height (%d)",
+			startHeight,
+			endHeight,
+		)
+	}
+
+	maspIndexerClient := NewMaspIndexerClient(maspIndexerUrl)
 
 	wg := &sync.WaitGroup{}
 	sem := make(chan struct{}, MaxConcurrentRequests)
@@ -81,10 +122,7 @@ func migrateEvents(stateDb, blockStoreDb *leveldb.DB, maspIndexerUrl string) err
 
 	var mainErr error
 
-	// TODO: change this to a loop over [start height, end height].
-	// at the beginning of the go routine, read the k:v pair associated
-	// with the height passed as an arg to the go routine.
-	for iter.Next() {
+	for height := startHeight; height <= endHeight; height++ {
 		select {
 		case mainErr = <-errs:
 			break
@@ -94,18 +132,23 @@ func migrateEvents(stateDb, blockStoreDb *leveldb.DB, maspIndexerUrl string) err
 		wg.Add(1)
 		sem <- struct{}{}
 
-		go func(key, value []byte) {
+		go func(height int) {
 			defer func() {
 				<-sem
 				wg.Done()
 			}()
 
+			key := []byte(fmt.Sprintf("abciResponsesKey:%d", height))
+			value, err := stateDb.Get(key, &opt.ReadOptions{})
+			if err != nil {
+				errs <- fmt.Errorf("failed to read block %d from state db: %w", height, err)
+				return
+			}
+
 			containsMaspDataRefs := false
 
 			abciResponses := new(cmtstate.ABCIResponses)
-			err := abciResponses.Unmarshal(value)
-
-			if err != nil {
+			if err := abciResponses.Unmarshal(value); err != nil {
 				errs <- fmt.Errorf("failed to unmarshal abci responses from state db: %w", err)
 				return
 			}
@@ -133,13 +176,6 @@ func migrateEvents(stateDb, blockStoreDb *leveldb.DB, maspIndexerUrl string) err
 				return
 			}
 
-			heightStr := extractHeight(iter.Key())
-			height, err := parseHeight(heightStr)
-			if err != nil {
-				errs <- err
-				return
-			}
-
 			maspTxs, err := maspIndexerClient.BlockHeight(height)
 			if err != nil {
 				errs <- err
@@ -156,7 +192,7 @@ func migrateEvents(stateDb, blockStoreDb *leveldb.DB, maspIndexerUrl string) err
 				for j := 0; j < len(maspTxs[i].Batch); j++ {
 					maspTxId, err := computeMaspTxId(maspTxs[i].Batch[j].Bytes)
 					if err != nil {
-						errs <- fmt.Errorf("block height %s failure: %w", heightStr, err)
+						errs <- fmt.Errorf("block height %d failure: %w", height, err)
 						return
 					}
 
@@ -164,7 +200,7 @@ func migrateEvents(stateDb, blockStoreDb *leveldb.DB, maspIndexerUrl string) err
 						namadaTxs[maspTxs[i].BlockIndex],
 					)
 					if err != nil {
-						errs <- fmt.Errorf("block height %s failure: %w", heightStr, err)
+						errs <- fmt.Errorf("block height %d failure: %w", height, err)
 						return
 					}
 
@@ -181,8 +217,8 @@ func migrateEvents(stateDb, blockStoreDb *leveldb.DB, maspIndexerUrl string) err
 
 							err = json.NewEncoder(&buf).Encode(sec.Hash)
 							errs <- fmt.Errorf(
-								"block height %s failure: failed to encode masp tx id to json: %w",
-								heightStr,
+								"block height %d failure: failed to encode masp tx id to json: %w",
+								height,
 								err,
 							)
 
@@ -193,8 +229,8 @@ func migrateEvents(stateDb, blockStoreDb *leveldb.DB, maspIndexerUrl string) err
 						}
 					} else {
 						errs <- fmt.Errorf(
-							"block height %s failure: unable to locate masp tx %v",
-							heightStr,
+							"block height %d failure: unable to locate masp tx %v",
+							height,
 							maspTxId,
 						)
 						return
@@ -207,14 +243,14 @@ func migrateEvents(stateDb, blockStoreDb *leveldb.DB, maspIndexerUrl string) err
 							Attributes: []types.EventAttribute{
 								{
 									Key:   "height",
-									Value: heightStr,
+									Value: strconv.Itoa(height),
 									Index: true,
 								},
 								{
 									Key: "indexed-tx",
 									Value: fmt.Sprintf(
-										`{"block_height":%s,"block_index":%d,"batch_index":%d}`,
-										heightStr,
+										`{"block_height":%d,"block_index":%d,"batch_index":%d}`,
+										height,
 										maspTxs[i].BlockIndex,
 										maspTxs[i].Batch[j].MaspTxIndex,
 									),
@@ -246,7 +282,7 @@ func migrateEvents(stateDb, blockStoreDb *leveldb.DB, maspIndexerUrl string) err
 			if err != nil {
 				errs <- fmt.Errorf("failed to write migrated abci responses to db: %w", err)
 			}
-		}(slices.Clone(iter.Key()), slices.Clone(iter.Value()))
+		}(height)
 	}
 
 	wg.Wait()

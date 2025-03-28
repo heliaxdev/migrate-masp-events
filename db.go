@@ -10,6 +10,7 @@ import (
 
 	"github.com/cosmos/gogoproto/proto"
 
+	cmtstore "github.com/cometbft/cometbft/proto/tendermint/store"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	cmt "github.com/cometbft/cometbft/types"
 )
@@ -151,4 +152,24 @@ func loadBlockMeta(blockStore *leveldb.DB, height int) (*cmt.BlockMeta, error) {
 	}
 
 	return blockMeta, nil
+}
+
+func loadLastDbHeight(stateDb *leveldb.DB) (int, error) {
+	value, err := stateDb.Get([]byte("blockStore"), &opt.ReadOptions{})
+	if err != nil {
+		return 0, fmt.Errorf(
+			"failed to read last committed height from state db: %w",
+			err,
+		)
+	}
+
+	var state cmtstore.BlockStoreState
+	if err := proto.Unmarshal(value, &state); err != nil {
+		return 0, fmt.Errorf(
+			"could not deserialize block store in state db: %w",
+			err,
+		)
+	}
+
+	return int(state.Height), nil
 }
