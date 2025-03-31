@@ -230,11 +230,14 @@ func validateHeightRange(
 	blockStoreDb *leveldb.DB,
 	startHeight, endHeight int,
 ) (int, int, error) {
+	baseCometHeight, lastCometHeight, err := loadLastDbBaseAndHeight(
+		blockStoreDb,
+	)
+	if err != nil {
+		return 0, 0, err
+	}
+
 	if endHeight == 0 {
-		lastCometHeight, err := loadLastDbHeight(blockStoreDb)
-		if err != nil {
-			return 0, 0, err
-		}
 		endHeight = lastCometHeight
 	}
 
@@ -248,6 +251,12 @@ func validateHeightRange(
 			"start height (%d) is greater than end height (%d)",
 			startHeight,
 			endHeight,
+		)
+	}
+
+	if baseCometHeight > startHeight || lastCometHeight < endHeight {
+		return 0, 0, fmt.Errorf(
+			"all comet tx data is necessary for the migrations, cannot use pruned node",
 		)
 	}
 
