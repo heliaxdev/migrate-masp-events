@@ -201,10 +201,10 @@ func loadBlockMeta(blockStore *leveldb.DB, height int) (*cmt.BlockMeta, error) {
 	return blockMeta, nil
 }
 
-func loadLastDbHeight(blockStoreDb *leveldb.DB) (int, error) {
+func loadLastDbBaseAndHeight(blockStoreDb *leveldb.DB) (int, int, error) {
 	value, err := blockStoreDb.Get([]byte("blockStore"), &opt.ReadOptions{})
 	if err != nil {
-		return 0, fmt.Errorf(
+		return 0, 0, fmt.Errorf(
 			"failed to read last committed height from blockstore db: %w",
 			err,
 		)
@@ -212,11 +212,19 @@ func loadLastDbHeight(blockStoreDb *leveldb.DB) (int, error) {
 
 	var state cmtstore.BlockStoreState
 	if err := proto.Unmarshal(value, &state); err != nil {
-		return 0, fmt.Errorf(
+		return 0, 0, fmt.Errorf(
 			"could not deserialize latest height from blockstore db: %w",
 			err,
 		)
 	}
 
-	return int(state.Height), nil
+	return int(state.Base), int(state.Height), nil
+}
+
+func loadLastDbHeight(blockStoreDb *leveldb.DB) (int, error) {
+	_, height, err := loadLastDbBaseAndHeight(blockStoreDb)
+	if err != nil {
+		return 0, err
+	}
+	return height, err
 }
