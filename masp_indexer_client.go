@@ -3,18 +3,25 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"net/http"
+	"strings"
 
 	"github.com/segmentio/encoding/json"
 )
 
 const MaxConcurrentRequests = 100
 
+type maspIndexerHealthResponse struct {
+	Version string `json:"version"`
+	Commit  string `json:"commit"`
+}
+
 type MaspIndexerClient struct {
 	// URL pointing to https://.../api/v1
 	maspIndexerApiV1 string
 	// Custom client config
-	client *http.Client
+	client http.Client
 }
 
 type TransactionSlot struct {
@@ -31,20 +38,94 @@ type serverResponse struct {
 	Txs []Transaction `json:"txs"`
 }
 
-func NewMaspIndexerClient(url string) *MaspIndexerClient {
+func NewMaspIndexerClient(url string) (*MaspIndexerClient, error) {
+	if !strings.HasSuffix(url, "/api/v1") {
+		return nil, fmt.Errorf(
+			`the url %q does not end with "/api/v1"`,
+			url,
+		)
+	}
+
 	t := http.DefaultTransport.(*http.Transport).Clone()
 
-	// Use either HTTP/1 or HTTP/2
+	// use either HTTP/1 or HTTP/2
 	t.Protocols = new(http.Protocols)
 	t.Protocols.SetHTTP1(true)
 	t.Protocols.SetHTTP2(true)
 
-	cli := &http.Client{Transport: t}
-
-	return &MaspIndexerClient{
+	client := &MaspIndexerClient{
 		maspIndexerApiV1: url,
-		client:           cli,
+		client:           http.Client{Transport: t},
 	}
+
+	err := client.validateVersion()
+	if err != nil {
+		return nil, err
+	}
+
+	return client, nil
+}
+
+func (m *MaspIndexerClient) validateVersion() error {
+	health, err := m.health()
+	if err != nil {
+		return err
+	}
+
+	if health.Version != "1.2.1" {
+		return fmt.Errorf("using invalid version %s, expected 1.2.1", health.Version)
+	}
+	if health.Commit != "6d6d022588a56f7c836e485de257e93646cd7847" {
+		if health.Commit == "" {
+			health.Commit = "<unknown-commit>"
+		}
+		log.Println(
+			"warning: masp indexer commit does not match release 1.2.1,",
+			m.maspIndexerApiV1,
+			"is using",
+			health.Commit,
+		)
+	}
+
+	return nil
+}
+
+func (m *MaspIndexerClient) health() (*maspIndexerHealthResponse, error) {
+	var response maspIndexerHealthResponse
+
+	req, err := http.NewRequest(
+		"GET",
+		fmt.Sprintf("%s/health", m.maspIndexerApiV1[:len(m.maspIndexerApiV1)-7]),
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to create request to health endpoint from %s: %w",
+			m.maspIndexerApiV1,
+			err,
+		)
+	}
+
+	rsp, err := m.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to query health endpoint from %s: %w",
+			m.maspIndexerApiV1,
+			err,
+		)
+	}
+	defer rsp.Body.Close()
+
+	err = json.NewDecoder(bufio.NewReader(rsp.Body)).Decode(&response)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to decode health endpoint response from %s: %w",
+			m.maspIndexerApiV1,
+			err,
+		)
+	}
+
+	return &response, nil
 }
 
 // TODO: if we care enough, use batch transfers to reduce the nr of requests
