@@ -359,7 +359,7 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 
 	log.Println("read events of block", height, "from state db")
 
-	containsOldMaspDataRefs := false
+	oldMaspDataRefsCount := 0
 	containsNewMaspDataRefs := false
 
 	abciResponses := new(cmtstate.ABCIResponses)
@@ -377,7 +377,7 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 						abciResponses.EndBlock.Events[i].Attributes,
 						e,
 					)
-					containsOldMaspDataRefs = true
+					oldMaspDataRefsCount++
 				}
 			}
 		case "masp/transfer", "masp/fee-payment":
@@ -390,7 +390,7 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 		}
 	}
 
-	if !containsOldMaspDataRefs {
+	if oldMaspDataRefsCount == 0 {
 		log.Println("no masp data refs found in block", height, "to migrate")
 		return
 	}
@@ -422,6 +422,8 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 		len(maspTxs),
 		"tx batches with masp txs",
 	)
+
+	newMaspDataRefsCount := 0
 
 	for i := 0; i < len(maspTxs); i++ {
 		log.Println(
@@ -532,7 +534,18 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 					},
 				},
 			)
+
+			newMaspDataRefsCount++
 		}
+	}
+
+	if oldMaspDataRefsCount != newMaspDataRefsCount {
+		ctx.reportErr(fmt.Errorf(
+			"old masp data refs count (%d) does not match migrated refs count (%d), make sure your masp indexer endpoint is running 1.2.1",
+			oldMaspDataRefsCount,
+			newMaspDataRefsCount,
+		))
+		return
 	}
 
 	log.Println("replaced all event data of block", height)
