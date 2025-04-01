@@ -22,7 +22,12 @@ import (
 	namproto "github.com/heliaxdev/migrate-masp-events/proto/types"
 )
 
+type maspDataRefs struct {
+	MaspRefs []struct{} `json:"masp_refs"`
+}
+
 type argsMigrate struct {
+	SkipValidateEventNum   bool
 	ContinueMigrating      bool
 	CometHome              string
 	MaspIndexer            string
@@ -66,6 +71,12 @@ func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
 				false,
 				"continue migrating the db even if we detect it's already been migrated",
 			)
+			flags.BoolVar(
+				&args.SkipValidateEventNum,
+				"skip-validate-event-num",
+				false,
+				"skip validating if the number of old events match the number of new events",
+			)
 		},
 		Entrypoint: func(iArgs any) error {
 			args := iArgs.(*argsMigrate)
@@ -89,6 +100,7 @@ func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
 				args.StartHeight,
 				args.EndHeight,
 				args.ContinueMigrating,
+				args.SkipValidateEventNum,
 			)
 		},
 	}
@@ -99,6 +111,7 @@ func migrateEvents(
 	maspIndexerUrl string,
 	startHeight, endHeight int,
 	continueMigrating bool,
+	skipValidateEventNum bool,
 ) error {
 	var err error
 
@@ -126,7 +139,7 @@ func migrateEvents(
 
 	maspIndexerClient := NewMaspIndexerClient(maspIndexerUrl)
 
-	migrationCtx := newMigrateEventsSyncCtx(totalToProcess)
+	migrationCtx := newMigrateEventsSyncCtx()
 
 	var mainErr error
 
@@ -148,6 +161,7 @@ func migrateEvents(
 			blockStoreDb,
 			maspIndexerClient,
 			continueMigrating,
+			skipValidateEventNum,
 		)
 	}
 
@@ -269,12 +283,11 @@ type migrateEventsSyncCtx struct {
 	wg   sync.WaitGroup
 }
 
-func newMigrateEventsSyncCtx(totalToProcess int) *migrateEventsSyncCtx {
+func newMigrateEventsSyncCtx() *migrateEventsSyncCtx {
 	ctx := &migrateEventsSyncCtx{
 		sem:  make(chan struct{}, MaxConcurrentRequests),
 		errs: make(chan error, MaxConcurrentRequests+1),
 	}
-	ctx.wg.Add(totalToProcess)
 	return ctx
 }
 
@@ -321,8 +334,9 @@ func (ctx *migrateEventsSyncCtx) migrateHeight(
 	stateDbTxn *leveldb.Transaction,
 	blockStoreDb *leveldb.DB,
 	maspIndexerClient *MaspIndexerClient,
-	continueMigrating bool,
+	continueMigrating, skipValidateEventNum bool,
 ) {
+	ctx.wg.Add(1)
 	ctx.sem <- struct{}{}
 
 	go ctx.migrateHeightTask(
@@ -331,6 +345,7 @@ func (ctx *migrateEventsSyncCtx) migrateHeight(
 		blockStoreDb,
 		maspIndexerClient,
 		continueMigrating,
+		skipValidateEventNum,
 	)
 }
 
@@ -344,7 +359,7 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 	stateDbTxn *leveldb.Transaction,
 	blockStoreDb *leveldb.DB,
 	maspIndexerClient *MaspIndexerClient,
-	continueMigrating bool,
+	continueMigrating, skipValidateEventNum bool,
 ) {
 	defer ctx.releaseSem()
 
@@ -372,12 +387,30 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 		switch abciResponses.EndBlock.Events[i].Type {
 		case "tx/applied":
 			for e := 0; e < len(abciResponses.EndBlock.Events[i].Attributes); e++ {
-				if abciResponses.EndBlock.Events[i].Attributes[e].Key == "masp_data_refs" {
+				attr := abciResponses.EndBlock.Events[i].Attributes[e]
+
+				if attr.Key == "masp_data_refs" {
 					abciResponses.EndBlock.Events[i].Attributes = swapRemove(
 						abciResponses.EndBlock.Events[i].Attributes,
 						e,
 					)
-					oldMaspDataRefsCount++
+
+					if skipValidateEventNum {
+						continue
+					}
+
+					var refs maspDataRefs
+
+					err = json.Unmarshal([]byte(attr.Value), &refs)
+					if err != nil {
+						ctx.reportErr(fmt.Errorf(
+							"failed to count num of old masp data refs: %w",
+							err,
+						))
+						return
+					}
+
+					oldMaspDataRefsCount += len(refs.MaspRefs)
 				}
 			}
 		case "masp/transfer", "masp/fee-payment":
@@ -539,7 +572,7 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 		}
 	}
 
-	if oldMaspDataRefsCount != newMaspDataRefsCount {
+	if !skipValidateEventNum && oldMaspDataRefsCount != newMaspDataRefsCount {
 		ctx.reportErr(fmt.Errorf(
 			"old masp data refs count (%d) does not match migrated refs count (%d), make sure your masp indexer endpoint is running 1.2.1",
 			oldMaspDataRefsCount,
