@@ -27,11 +27,13 @@ type maspDataRefs struct {
 }
 
 type argsMigrate struct {
-	SkipValidateEventNum   bool
-	ContinueMigrating      bool
-	CometHome              string
-	MaspIndexer            string
-	StartHeight, EndHeight int
+	SkipValidateEventNum bool
+	ContinueMigrating    bool
+	InvalidCommitNotErr  bool
+	StartHeight          int
+	EndHeight            int
+	CometHome            string
+	MaspIndexer          string
 }
 
 func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
@@ -77,6 +79,12 @@ func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
 				false,
 				"skip validating if the number of old events match the number of new events",
 			)
+			flags.BoolVar(
+				&args.InvalidCommitNotErr,
+				"invalid-masp-commit-not-err",
+				false,
+				"allow using a masp indexer on an invalid commit",
+			)
 		},
 		Entrypoint: func(iArgs any) error {
 			args := iArgs.(*argsMigrate)
@@ -101,6 +109,7 @@ func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
 				args.EndHeight,
 				args.ContinueMigrating,
 				args.SkipValidateEventNum,
+				args.InvalidCommitNotErr,
 			)
 		},
 	}
@@ -112,6 +121,7 @@ func migrateEvents(
 	startHeight, endHeight int,
 	continueMigrating bool,
 	skipValidateEventNum bool,
+	invalidCommitNotErr bool,
 ) error {
 	var err error
 
@@ -139,6 +149,9 @@ func migrateEvents(
 
 	maspIndexerClient, err := NewMaspIndexerClient(maspIndexerUrl)
 	if err != nil {
+		return err
+	}
+	if err = maspIndexerClient.ValidateVersion(invalidCommitNotErr); err != nil {
 		return err
 	}
 

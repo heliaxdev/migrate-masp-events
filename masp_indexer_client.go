@@ -58,15 +58,10 @@ func NewMaspIndexerClient(url string) (*MaspIndexerClient, error) {
 		client:           http.Client{Transport: t},
 	}
 
-	err := client.validateVersion()
-	if err != nil {
-		return nil, err
-	}
-
 	return client, nil
 }
 
-func (m *MaspIndexerClient) validateVersion() error {
+func (m *MaspIndexerClient) ValidateVersion(invalidCommitNotErr bool) error {
 	health, err := m.health()
 	if err != nil {
 		return err
@@ -76,6 +71,12 @@ func (m *MaspIndexerClient) validateVersion() error {
 		return fmt.Errorf("using invalid version %s, expected 1.2.1", health.Version)
 	}
 	if health.Commit != "6d6d022588a56f7c836e485de257e93646cd7847" {
+		if !invalidCommitNotErr {
+			return fmt.Errorf(
+				"using invalid commit %q, expected 6d6d022588a56f7c836e485de257e93646cd7847",
+				health.Commit,
+			)
+		}
 		if health.Commit == "" {
 			health.Commit = "<unknown-commit>"
 		}
