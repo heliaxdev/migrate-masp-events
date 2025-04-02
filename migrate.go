@@ -590,7 +590,7 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 
 	if !skipValidateEventNum && oldMaspDataRefsCount != newMaspDataRefsCount {
 		ctx.reportErr(fmt.Errorf(
-			"old masp data refs count (%d) does not match migrated refs count (%d)",
+			"old masp data refs count (%d) does not match migrated refs count (%d), make sure your masp indexer endpoint is running 1.2.1",
 			oldMaspDataRefsCount,
 			newMaspDataRefsCount,
 		))
