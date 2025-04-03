@@ -174,5 +174,7 @@ func (m *MaspIndexerClient) BlockHeight(height int) ([]Transaction, error) {
 		)
 	}
 
+	// TODO: sort response.Txs based on MaspTxIndex
+
 	return response.Txs, nil
 }
