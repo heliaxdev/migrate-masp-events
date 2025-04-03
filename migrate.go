@@ -27,13 +27,12 @@ type maspDataRefs struct {
 }
 
 type argsMigrate struct {
-	SkipValidateEventNum bool
-	ContinueMigrating    bool
-	InvalidCommitNotErr  bool
-	StartHeight          int
-	EndHeight            int
-	CometHome            string
-	MaspIndexer          string
+	ContinueMigrating   bool
+	InvalidCommitNotErr bool
+	StartHeight         int
+	EndHeight           int
+	CometHome           string
+	MaspIndexer         string
 }
 
 func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
@@ -74,12 +73,6 @@ func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
 				"continue migrating the db even if we detect it's already been migrated",
 			)
 			flags.BoolVar(
-				&args.SkipValidateEventNum,
-				"skip-validate-event-num",
-				false,
-				"skip validating if the number of old events match the number of new events",
-			)
-			flags.BoolVar(
 				&args.InvalidCommitNotErr,
 				"invalid-masp-commit-not-err",
 				false,
@@ -108,7 +101,6 @@ func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
 				args.StartHeight,
 				args.EndHeight,
 				args.ContinueMigrating,
-				args.SkipValidateEventNum,
 				args.InvalidCommitNotErr,
 			)
 		},
@@ -120,7 +112,6 @@ func migrateEvents(
 	maspIndexerUrl string,
 	startHeight, endHeight int,
 	continueMigrating bool,
-	skipValidateEventNum bool,
 	invalidCommitNotErr bool,
 ) error {
 	var err error
@@ -177,7 +168,6 @@ func migrateEvents(
 			blockStoreDb,
 			maspIndexerClient,
 			continueMigrating,
-			skipValidateEventNum,
 		)
 	}
 
@@ -350,7 +340,7 @@ func (ctx *migrateEventsSyncCtx) migrateHeight(
 	stateDbTxn *leveldb.Transaction,
 	blockStoreDb *leveldb.DB,
 	maspIndexerClient *MaspIndexerClient,
-	continueMigrating, skipValidateEventNum bool,
+	continueMigrating bool,
 ) {
 	ctx.wg.Add(1)
 	ctx.sem <- struct{}{}
@@ -361,7 +351,6 @@ func (ctx *migrateEventsSyncCtx) migrateHeight(
 		blockStoreDb,
 		maspIndexerClient,
 		continueMigrating,
-		skipValidateEventNum,
 	)
 }
 
@@ -375,7 +364,7 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 	stateDbTxn *leveldb.Transaction,
 	blockStoreDb *leveldb.DB,
 	maspIndexerClient *MaspIndexerClient,
-	continueMigrating, skipValidateEventNum bool,
+	continueMigrating bool,
 ) {
 	defer ctx.releaseSem()
 
@@ -410,10 +399,6 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 						abciResponses.EndBlock.Events[i].Attributes,
 						e,
 					)
-
-					if skipValidateEventNum {
-						continue
-					}
 
 					var refs maspDataRefs
 
@@ -588,7 +573,7 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 		}
 	}
 
-	if !skipValidateEventNum && oldMaspDataRefsCount != newMaspDataRefsCount {
+	if oldMaspDataRefsCount != newMaspDataRefsCount {
 		ctx.reportErr(fmt.Errorf(
 			"old masp data refs count (%d) does not match migrated refs count (%d), make sure your masp indexer endpoint is running 1.2.1",
 			oldMaspDataRefsCount,
