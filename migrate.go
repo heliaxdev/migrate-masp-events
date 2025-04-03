@@ -22,8 +22,18 @@ import (
 	namproto "github.com/heliaxdev/migrate-masp-events/proto/types"
 )
 
+const (
+	eventMaspTransfer   = "masp/transfer"
+	eventMaspFeePayment = "masp/fee-payment"
+)
+
 type maspDataRefs struct {
-	MaspRefs []struct{} `json:"masp_refs"`
+	MaspRefs []maspDataRef `json:"masp_refs"`
+}
+
+type maspDataRef struct {
+	IbcData     string
+	MaspSection []byte
 }
 
 type argsMigrate struct {
@@ -489,44 +499,8 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 				maspTxs[i].BlockIndex,
 			)
 
-			var sectionEventValue string
-
-			if sec, ok := maspSections[maspTxId]; ok {
-				hexHash := strings.ToUpper(hex.EncodeToString(sec.Hash[:]))
-
-				if sec.Ibc {
-					sectionEventValue = fmt.Sprintf(
-						`{"IbcData":"%s"}`,
-						hexHash,
-					)
-
-					log.Println("found ibc data section", hexHash, "at height", height, "with masp tx")
-				} else {
-					var buf bytes.Buffer
-
-					err = json.NewEncoder(&buf).Encode(&sec.Hash)
-					if err != nil {
-						ctx.reportErr(fmt.Errorf(
-							"block height %d failure: failed to encode masp tx id to json: %w",
-							height,
-							err,
-						))
-						return
-					}
-
-					encoded := buf.String()
-					if len(encoded) > 0 && encoded[len(encoded)-1] == '\n' {
-						encoded = encoded[:len(encoded)-1]
-					}
-
-					sectionEventValue = fmt.Sprintf(
-						`{"MaspSection":%s}`,
-						encoded,
-					)
-
-					log.Println("found masp section", hexHash, "at height", height)
-				}
-			} else {
+			sec, ok := maspSections[maspTxId]
+			if !ok {
 				ctx.reportErr(fmt.Errorf(
 					"block height %d failure: unable to locate masp tx %v",
 					height,
@@ -535,39 +509,18 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 				return
 			}
 
-			abciResponses.EndBlock.Events = append(
+			abciResponses.EndBlock.Events, err = appendNewMaspEvent(
 				abciResponses.EndBlock.Events,
-				types.Event{
-					Type: "masp/transfer",
-					Attributes: []types.EventAttribute{
-						{
-							Key:   "height",
-							Value: strconv.Itoa(height),
-							Index: true,
-						},
-						{
-							Key: "indexed-tx",
-							Value: fmt.Sprintf(
-								`{"block_height":%d,"block_index":%d,"batch_index":%d}`,
-								height,
-								maspTxs[i].BlockIndex,
-								maspTxs[i].Batch[j].MaspTxIndex,
-							),
-							Index: true,
-						},
-						{
-							Key:   "section",
-							Value: sectionEventValue,
-							Index: true,
-						},
-						{
-							Key:   "event-level",
-							Value: "tx",
-							Index: true,
-						},
-					},
-				},
+				eventMaspTransfer,
+				height,
+				maspTxs[i].BlockIndex,
+				maspTxs[i].Batch[j].MaspTxIndex,
+				sec,
 			)
+			if err != nil {
+				ctx.reportErr(err)
+				return
+			}
 
 			newMaspDataRefsCount++
 		}
@@ -598,4 +551,88 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 	}
 
 	log.Println("migrated all events of block", height)
+}
+
+func appendNewMaspEvent(
+	endBlockEvents []types.Event,
+	maspEventType string,
+	height int,
+	blockIndex int,
+	batchIndex int,
+	sec namada.MaspTxSection,
+) ([]types.Event, error) {
+	hexHash := strings.ToUpper(hex.EncodeToString(sec.Hash[:]))
+
+	var sectionEventValue string
+
+	if sec.Ibc {
+		sectionEventValue = fmt.Sprintf(
+			`{"IbcData":"%s"}`,
+			hexHash,
+		)
+
+		log.Println("found ibc data section", hexHash, "at height", height, "with masp tx")
+	} else {
+		var buf bytes.Buffer
+
+		err := json.NewEncoder(&buf).Encode(&sec.Hash)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"block height %d failure: failed to encode masp tx id to json: %w",
+				height,
+				err,
+			)
+		}
+
+		encoded := buf.String()
+		if len(encoded) > 0 && encoded[len(encoded)-1] == '\n' {
+			encoded = encoded[:len(encoded)-1]
+		}
+
+		sectionEventValue = fmt.Sprintf(
+			`{"MaspSection":%s}`,
+			encoded,
+		)
+
+		log.Println("found masp section", hexHash, "at height", height)
+	}
+
+	return append(
+		endBlockEvents,
+		types.Event{
+			Type: maspEventType,
+			Attributes: []types.EventAttribute{
+				{
+					Key:   "height",
+					Value: strconv.Itoa(height),
+					Index: true,
+				},
+				{
+					Key: "indexed-tx",
+					Value: fmt.Sprintf(
+						`{"block_height":%d,"block_index":%d,"batch_index":%d}`,
+						height,
+						blockIndex,
+						batchIndex,
+					),
+					Index: true,
+				},
+				{
+					Key:   "section",
+					Value: sectionEventValue,
+					Index: true,
+				},
+				{
+					Key:   "event-level",
+					Value: "tx",
+					Index: true,
+				},
+			},
+		},
+	), nil
+}
+
+func (r1 *maspDataRef) Equal(r2 *maspDataRef) bool {
+	return bytes.Equal(r1.MaspSection, r2.MaspSection) &&
+		r1.IbcData == r2.IbcData
 }
