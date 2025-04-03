@@ -27,7 +27,14 @@ const (
 	eventMaspFeePayment = "masp/fee-payment"
 )
 
+type indexedMaspSection struct {
+	blockIndex  int
+	maspTxIndex int
+	section     namada.MaspTxSection
+}
+
 type maspDataRefs struct {
+	TxIndex  int           `json:"tx_index"`
 	MaspRefs []maspDataRef `json:"masp_refs"`
 }
 
@@ -389,7 +396,8 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 
 	log.Println("read events of block", height, "from state db")
 
-	oldMaspDataRefsCount := 0
+	var oldMaspDataRefs []indexedMaspSection
+
 	containsNewMaspDataRefs := false
 
 	abciResponses := new(cmtstate.ABCIResponses)
@@ -401,6 +409,7 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 	for i := 0; i < len(abciResponses.EndBlock.Events); i++ {
 		switch abciResponses.EndBlock.Events[i].Type {
 		case "tx/applied":
+		attributesIter:
 			for e := 0; e < len(abciResponses.EndBlock.Events[i].Attributes); e++ {
 				attr := abciResponses.EndBlock.Events[i].Attributes[e]
 
@@ -421,7 +430,27 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 						return
 					}
 
-					oldMaspDataRefsCount += len(refs.MaspRefs)
+					for r := 0; r < len(refs.MaspRefs); r++ {
+						sec, err := refs.MaspRefs[r].toMaspTxSection()
+						if err != nil {
+							ctx.reportErr(fmt.Errorf(
+								"failed to decode old masp data refs: %w",
+								err,
+							))
+							return
+						}
+
+						oldMaspDataRefs = append(
+							oldMaspDataRefs,
+							indexedMaspSection{
+								blockIndex:  refs.TxIndex,
+								maspTxIndex: r,
+								section:     sec,
+							},
+						)
+					}
+
+					break attributesIter
 				}
 			}
 		case "masp/transfer", "masp/fee-payment":
@@ -434,7 +463,7 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 		}
 	}
 
-	if oldMaspDataRefsCount == 0 {
+	if len(oldMaspDataRefs) == 0 {
 		log.Println("no masp data refs found in block", height, "to migrate")
 		return
 	}
@@ -467,7 +496,7 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 		"tx batches with masp txs",
 	)
 
-	newMaspDataRefsCount := 0
+	var newMaspDataRefs []indexedMaspSection
 
 	for i := 0; i < len(maspTxs); i++ {
 		log.Println(
@@ -509,30 +538,92 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 				return
 			}
 
-			abciResponses.EndBlock.Events, err = appendNewMaspEvent(
-				abciResponses.EndBlock.Events,
-				eventMaspTransfer,
-				height,
-				maspTxs[i].BlockIndex,
-				maspTxs[i].Batch[j].MaspTxIndex,
-				sec,
+			newMaspDataRefs = append(
+				newMaspDataRefs,
+				indexedMaspSection{
+					blockIndex:  maspTxs[i].BlockIndex,
+					maspTxIndex: maspTxs[i].Batch[j].MaspTxIndex,
+					section:     sec,
+				},
 			)
-			if err != nil {
-				ctx.reportErr(err)
-				return
-			}
-
-			newMaspDataRefsCount++
 		}
 	}
 
-	if oldMaspDataRefsCount != newMaspDataRefsCount {
+	if len(oldMaspDataRefs) != len(newMaspDataRefs) {
 		ctx.reportErr(fmt.Errorf(
 			"old masp data refs count (%d) does not match migrated refs count (%d), make sure your masp indexer endpoint is running 1.2.1",
-			oldMaspDataRefsCount,
-			newMaspDataRefsCount,
+			len(oldMaspDataRefs),
+			len(newMaspDataRefs),
 		))
 		return
+	}
+
+	log.Println("locating masp fee payments of block", height)
+
+	for newMaspDataRefIndex := 0; newMaspDataRefIndex < len(newMaspDataRefs); newMaspDataRefIndex++ {
+		var (
+			oldMaspDataRefIndex int
+			maspEventType       string
+			found               bool
+		)
+
+		// do a linear scan of the old refs to find the new event
+		for ; oldMaspDataRefIndex < len(oldMaspDataRefs); oldMaspDataRefIndex++ {
+			isSameSection := newMaspDataRefs[newMaspDataRefIndex].SameSection(
+				&oldMaspDataRefs[oldMaspDataRefIndex],
+			)
+			if isSameSection {
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			ctx.reportErr(fmt.Errorf(
+				"missing masp event at height %d: %#v",
+				height,
+				newMaspDataRefs[newMaspDataRefIndex],
+			))
+			return
+		}
+
+		type section struct {
+			BlockHeight        int
+			IndexedMaspSection indexedMaspSection
+		}
+
+		if oldMaspDataRefIndex <= newMaspDataRefIndex {
+			log.Println(
+				"found masp fee payment:",
+				fmt.Sprintf("%#v", section{
+					height,
+					newMaspDataRefs[newMaspDataRefIndex],
+				}),
+			)
+			maspEventType = eventMaspFeePayment
+		} else {
+			log.Println(
+				"found regular masp transfer:",
+				fmt.Sprintf("%#v", section{
+					height,
+					newMaspDataRefs[newMaspDataRefIndex],
+				}),
+			)
+			maspEventType = eventMaspTransfer
+		}
+
+		abciResponses.EndBlock.Events, err = appendNewMaspEvent(
+			abciResponses.EndBlock.Events,
+			maspEventType,
+			height,
+			newMaspDataRefs[newMaspDataRefIndex].blockIndex,
+			newMaspDataRefs[newMaspDataRefIndex].maspTxIndex,
+			newMaspDataRefs[newMaspDataRefIndex].section,
+		)
+		if err != nil {
+			ctx.reportErr(err)
+			return
+		}
 	}
 
 	log.Println("replaced all event data of block", height)
@@ -571,7 +662,7 @@ func appendNewMaspEvent(
 			hexHash,
 		)
 
-		log.Println("found ibc data section", hexHash, "at height", height, "with masp tx")
+		log.Println("stashing ibc data section", hexHash, "at height", height, "with masp tx")
 	} else {
 		var buf bytes.Buffer
 
@@ -594,7 +685,7 @@ func appendNewMaspEvent(
 			encoded,
 		)
 
-		log.Println("found masp section", hexHash, "at height", height)
+		log.Println("stashing masp section", hexHash, "at height", height)
 	}
 
 	return append(
@@ -632,7 +723,39 @@ func appendNewMaspEvent(
 	), nil
 }
 
-func (r1 *maspDataRef) Equal(r2 *maspDataRef) bool {
-	return bytes.Equal(r1.MaspSection, r2.MaspSection) &&
-		r1.IbcData == r2.IbcData
+func (s1 *indexedMaspSection) SameSection(s2 *indexedMaspSection) bool {
+	return s1.section.Ibc == s2.section.Ibc && s1.section.Hash == s2.section.Hash
+}
+
+func (r *maspDataRef) toMaspTxSection() (sec namada.MaspTxSection, err error) {
+	var n int
+
+	ibcData := r.IbcData
+
+	switch {
+	case ibcData != "":
+		if n = hex.DecodedLen(len(ibcData)); n != 32 {
+			err = fmt.Errorf("invalid ibc data section length %d", n)
+			return
+		}
+
+		n, err = hex.Decode(sec.Hash[:], []byte(ibcData))
+		if n != 32 {
+			err = fmt.Errorf("invalid ibc data section length %d", n)
+		}
+		if err != nil {
+			err = fmt.Errorf("failed to decode ibc data section: %w", err)
+		}
+
+		sec.Ibc = true
+	default:
+		if n = len(r.MaspSection); n != 32 {
+			err = fmt.Errorf("invalid masp tx id length %d", n)
+			return
+		}
+
+		copy(sec.Hash[:], r.MaspSection)
+	}
+
+	return
 }
