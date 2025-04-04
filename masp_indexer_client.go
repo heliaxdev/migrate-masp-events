@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/segmentio/encoding/json"
@@ -174,7 +175,25 @@ func (m *MaspIndexerClient) BlockHeight(height int) ([]Transaction, error) {
 		)
 	}
 
-	// TODO: sort response.Txs based on MaspTxIndex
+	response.sortMaspTxs()
 
 	return response.Txs, nil
+}
+
+func (r *serverResponse) sortMaspTxs() {
+	slices.SortFunc(r.Txs, func(t1, t2 Transaction) int {
+		return t1.maxMaspTxIndex() - t2.maxMaspTxIndex()
+	})
+}
+
+func (t *Transaction) maxMaspTxIndex() (max int) {
+	if len(t.Batch) == 0 {
+		panic("got empty masp transaction batch")
+	}
+	for i := 0; i < len(t.Batch); i++ {
+		if t.Batch[i].MaspTxIndex > max {
+			max = t.Batch[i].MaspTxIndex
+		}
+	}
+	return
 }
