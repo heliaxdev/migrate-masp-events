@@ -4,6 +4,15 @@ RUSTLIB := libparse.a
 .PHONY: all
 all: $(BIN)
 
+.PHONY: test
+test: $(RUSTLIB)
+	go test -v
+
+.PHONY: clean
+clean:
+	rm -f $(BIN)
+	cd namada/parse && cargo clean
+
 .PHONY: fmt
 fmt:
 	go fmt github.com/heliaxdev/migrate-masp-events
