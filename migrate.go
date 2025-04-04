@@ -560,6 +560,40 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 
 	log.Println("locating masp fee payments of block", height)
 
+	abciResponses.EndBlock.Events, err = emitMaspEvents(
+		height,
+		abciResponses.EndBlock.Events,
+		oldMaspDataRefs,
+		newMaspDataRefs,
+	)
+	if err != nil {
+		ctx.reportErr(fmt.Errorf("failed to emit masp events: %w", err))
+		return
+	}
+
+	log.Println("replaced all event data of block", height)
+
+	value, err = abciResponses.Marshal()
+	if err != nil {
+		ctx.reportErr(fmt.Errorf("failed to marshal abci responses: %w", err))
+		return
+	}
+
+	log.Println("storing changes of block", height, "in db")
+
+	err = stateDbTxn.Put(key, value, new(opt.WriteOptions))
+	if err != nil {
+		ctx.reportErr(fmt.Errorf("failed to write migrated abci responses to db: %w", err))
+	}
+
+	log.Println("migrated all events of block", height)
+}
+
+func emitMaspEvents(
+	height int,
+	endBlockEvents []types.Event,
+	oldMaspDataRefs, newMaspDataRefs []indexedMaspSection,
+) ([]types.Event, error) {
 	for newMaspDataRefIndex := 0; newMaspDataRefIndex < len(newMaspDataRefs); newMaspDataRefIndex++ {
 		var (
 			oldMaspDataRefIndex int
@@ -579,12 +613,11 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 		}
 
 		if !found {
-			ctx.reportErr(fmt.Errorf(
+			return nil, fmt.Errorf(
 				"missing masp event at height %d: %#v",
 				height,
 				newMaspDataRefs[newMaspDataRefIndex],
-			))
-			return
+			)
 		}
 
 		type section struct {
@@ -612,8 +645,10 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 			maspEventType = eventMaspTransfer
 		}
 
-		abciResponses.EndBlock.Events, err = appendNewMaspEvent(
-			abciResponses.EndBlock.Events,
+		var err error
+
+		endBlockEvents, err = appendNewMaspEvent(
+			endBlockEvents,
 			maspEventType,
 			height,
 			newMaspDataRefs[newMaspDataRefIndex].blockIndex,
@@ -621,27 +656,11 @@ func (ctx *migrateEventsSyncCtx) migrateHeightTask(
 			newMaspDataRefs[newMaspDataRefIndex].section,
 		)
 		if err != nil {
-			ctx.reportErr(err)
-			return
+			return nil, err
 		}
 	}
 
-	log.Println("replaced all event data of block", height)
-
-	value, err = abciResponses.Marshal()
-	if err != nil {
-		ctx.reportErr(fmt.Errorf("failed to marshal abci responses: %w", err))
-		return
-	}
-
-	log.Println("storing changes of block", height, "in db")
-
-	err = stateDbTxn.Put(key, value, new(opt.WriteOptions))
-	if err != nil {
-		ctx.reportErr(fmt.Errorf("failed to write migrated abci responses to db: %w", err))
-	}
-
-	log.Println("migrated all events of block", height)
+	return endBlockEvents, nil
 }
 
 func appendNewMaspEvent(
