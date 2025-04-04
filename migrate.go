@@ -625,7 +625,7 @@ func emitMaspEvents(
 			IndexedMaspSection indexedMaspSection
 		}
 
-		if oldMaspDataRefIndex <= newMaspDataRefIndex {
+		if oldMaspDataRefIndex >= newMaspDataRefIndex {
 			log.Println(
 				"found masp fee payment:",
 				fmt.Sprintf("%#v", section{
