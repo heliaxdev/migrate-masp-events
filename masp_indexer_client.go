@@ -14,8 +14,7 @@ import (
 const MaxConcurrentRequests = 100
 
 type maspIndexerHealthResponse struct {
-	Version string `json:"version"`
-	Commit  string `json:"commit"`
+	Commit string `json:"commit"`
 }
 
 type MaspIndexerClient struct {
@@ -68,13 +67,10 @@ func (m *MaspIndexerClient) ValidateVersion(invalidCommitNotErr bool) error {
 		return err
 	}
 
-	if health.Version != "1.2.1" {
-		return fmt.Errorf("using invalid version %s, expected 1.2.1", health.Version)
-	}
-	if health.Commit != "6d6d022588a56f7c836e485de257e93646cd7847" {
+	if health.Commit != "38093aca7bc8cd3bb03ef06ce139fe4e672b20ff" {
 		if !invalidCommitNotErr {
 			return fmt.Errorf(
-				"using invalid commit %q, expected 6d6d022588a56f7c836e485de257e93646cd7847",
+				"using invalid commit %q, expected 38093aca7bc8cd3bb03ef06ce139fe4e672b20ff (1.2.0)",
 				health.Commit,
 			)
 		}
@@ -82,7 +78,7 @@ func (m *MaspIndexerClient) ValidateVersion(invalidCommitNotErr bool) error {
 			health.Commit = "<unknown-commit>"
 		}
 		log.Println(
-			"warning: masp indexer commit does not match release 1.2.1,",
+			"warning: masp indexer commit does not match release 1.2.0,",
 			m.maspIndexerApiV1,
 			"is using",
 			health.Commit,
