@@ -128,8 +128,6 @@ func (m *MaspIndexerClient) health() (*maspIndexerHealthResponse, error) {
 	return &response, nil
 }
 
-// TODO: if we care enough, use batch transfers to reduce the nr of requests
-// to the masp indexer webserver
 func (m *MaspIndexerClient) BlockHeight(height int) ([]Transaction, error) {
 	req, err := http.NewRequest(
 		"GET",
