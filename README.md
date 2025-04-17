@@ -13,8 +13,8 @@ available in your `PATH`. The resulting binary is `migrate-masp-events`.
 
 ## Usage
 
-    $ migrate-masp-events migrate -h
-    $ migrate-masp-events migrate <subcmd> -h
+    $ migrate-masp-events -h
+    $ migrate-masp-events <subcmd> -h
 
 ## Migration instructions
 
