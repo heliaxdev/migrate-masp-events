@@ -44,12 +44,13 @@ type maspDataRef struct {
 }
 
 type argsMigrate struct {
-	ContinueMigrating   bool
-	InvalidCommitNotErr bool
-	StartHeight         int
-	EndHeight           int
-	CometHome           string
-	MaspIndexer         string
+	ContinueMigrating     bool
+	InvalidCommitNotErr   bool
+	StartHeight           int
+	EndHeight             int
+	CometHome             string
+	MaspIndexer           string
+	MaxConcurrentRequests int
 }
 
 func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
@@ -95,6 +96,12 @@ func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
 				false,
 				"allow using a masp indexer on an invalid commit",
 			)
+			flags.IntVar(
+				&args.MaxConcurrentRequests,
+				"max-concurrent-requests",
+				DefaultMaxConcurrentRequests,
+				"number of idle connections used to make concurrent requests (too many may result in connection reset by peer errors)",
+			)
 		},
 		Entrypoint: func(iArgs any) error {
 			args := iArgs.(*argsMigrate)
@@ -119,6 +126,7 @@ func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
 				args.EndHeight,
 				args.ContinueMigrating,
 				args.InvalidCommitNotErr,
+				args.MaxConcurrentRequests,
 			)
 		},
 	}
@@ -130,6 +138,7 @@ func migrateEvents(
 	startHeight, endHeight int,
 	continueMigrating bool,
 	invalidCommitNotErr bool,
+	maxConcurrentRequests int,
 ) error {
 	var err error
 
@@ -155,7 +164,7 @@ func migrateEvents(
 		return nil
 	}
 
-	maspIndexerClient, err := NewMaspIndexerClient(maspIndexerUrl)
+	maspIndexerClient, err := NewMaspIndexerClient(maspIndexerUrl, maxConcurrentRequests)
 	if err != nil {
 		return err
 	}
@@ -163,7 +172,7 @@ func migrateEvents(
 		return err
 	}
 
-	migrationCtx := newMigrateEventsSyncCtx()
+	migrationCtx := newMigrateEventsSyncCtx(maxConcurrentRequests)
 
 	var mainErr error
 
@@ -306,10 +315,10 @@ type migrateEventsSyncCtx struct {
 	wg   sync.WaitGroup
 }
 
-func newMigrateEventsSyncCtx() *migrateEventsSyncCtx {
+func newMigrateEventsSyncCtx(maxConcurrentRequests int) *migrateEventsSyncCtx {
 	ctx := &migrateEventsSyncCtx{
-		sem:  make(chan struct{}, MaxConcurrentRequests),
-		errs: make(chan error, MaxConcurrentRequests+1),
+		sem:  make(chan struct{}, maxConcurrentRequests),
+		errs: make(chan error, maxConcurrentRequests+1),
 	}
 	return ctx
 }

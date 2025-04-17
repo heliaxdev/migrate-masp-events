@@ -11,7 +11,7 @@ import (
 	"github.com/segmentio/encoding/json"
 )
 
-const MaxConcurrentRequests = 100
+const DefaultMaxConcurrentRequests = 100
 
 type maspIndexerHealthResponse struct {
 	Commit string `json:"commit"`
@@ -22,6 +22,8 @@ type MaspIndexerClient struct {
 	maspIndexerApiV1 string
 	// Custom client config
 	client http.Client
+	// Number of connections in the pool
+	maxConcurrentRequests int
 }
 
 type TransactionSlot struct {
@@ -38,7 +40,7 @@ type serverResponse struct {
 	Txs []Transaction `json:"txs"`
 }
 
-func NewMaspIndexerClient(url string) (*MaspIndexerClient, error) {
+func NewMaspIndexerClient(url string, maxConcurrentRequests int) (*MaspIndexerClient, error) {
 	if !strings.HasSuffix(url, "/api/v1") {
 		return nil, fmt.Errorf(
 			`the url %q does not end with "/api/v1"`,
@@ -146,7 +148,7 @@ func (m *MaspIndexerClient) BlockHeight(height int) ([]Transaction, error) {
 		"Connection", "keep-alive",
 	)
 	req.Header.Add(
-		"Keep-Alive", fmt.Sprintf("timeout=60, max=%d", MaxConcurrentRequests),
+		"Keep-Alive", fmt.Sprintf("timeout=60, max=%d", m.maxConcurrentRequests),
 	)
 
 	rsp, err := m.client.Do(req)
