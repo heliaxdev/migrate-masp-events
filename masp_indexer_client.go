@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/segmentio/encoding/json"
 )
@@ -38,6 +40,10 @@ type Transaction struct {
 
 type serverResponse struct {
 	Txs []Transaction `json:"txs"`
+}
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
 }
 
 func NewMaspIndexerClient(url string, maxConcurrentRequests int) (*MaspIndexerClient, error) {
@@ -128,7 +134,52 @@ func (m *MaspIndexerClient) health() (*maspIndexerHealthResponse, error) {
 	return &response, nil
 }
 
-func (m *MaspIndexerClient) BlockHeight(height int) ([]Transaction, error) {
+func (m *MaspIndexerClient) BlockHeight(height int) (txs []Transaction, err error) {
+	const (
+		maxJitterMs = 50
+		maxRetries  = 10
+		maxBackoff  = 1 * time.Second
+	)
+
+	randomJitter := func() time.Duration {
+		return time.Duration(rand.Intn(maxJitterMs)) * time.Millisecond
+	}
+
+	exponentialBackoff := func(retryCounter int) time.Duration {
+		return time.Duration(1<<retryCounter) * time.Millisecond
+	}
+
+	backoff := func(retryCounter int) time.Duration {
+		backoff := exponentialBackoff(retryCounter) + randomJitter()
+
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+
+		return backoff
+	}
+
+	for i := 0; i < maxRetries; i++ {
+		txs, err = m.blockHeight(height)
+		if err == nil {
+			return
+		}
+		sleepDuration := backoff(i)
+		log.Println(
+			"fetch of masp txs of block",
+			height,
+			"failed, retrying after sleeping for",
+			sleepDuration,
+		)
+		time.Sleep(sleepDuration)
+	}
+
+	log.Println("exhausted all", maxRetries, "attempts to fetch block", height)
+
+	return
+}
+
+func (m *MaspIndexerClient) blockHeight(height int) ([]Transaction, error) {
 	req, err := http.NewRequest(
 		"GET",
 		fmt.Sprintf(
