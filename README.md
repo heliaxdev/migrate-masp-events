@@ -39,8 +39,8 @@ important, as the migrations require access to historical tx data.
 
 - **Invalid masp indexer commit:** Indexers running other versions will
 make the migrations error out. If your indexer is running `v1.2.1` or
-some other compatible version, you may include the `-invalid-masp-commit-not-err`
-flag in the command of step 4, above.
+some other version compatible with `v1.2.0`, you may include the
+`-invalid-masp-commit-not-err` flag in the command of step 4, above.
 - **Connection reset by peer:** Some weaker machines may run into trouble while
 migrating, by getting "connection reset by peer" errors. If that is the case,
 pass the flag `-max-concurrent-requests 10` to the command from step 4, above.
