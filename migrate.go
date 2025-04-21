@@ -56,7 +56,7 @@ type argsMigrate struct {
 func RegisterCommandMigrate(subCommands map[string]*SubCommand) {
 	subCommands["migrate"] = &SubCommand{
 		Args:        &argsMigrate{},
-		Description: "migrate old masp events (<= namada v1.1.4) in the state db of cometbft",
+		Description: "migrate old masp events (<= namada v1.1.5) in the state db of cometbft",
 		ConfigureFlags: func(iArgs any, flags *flag.FlagSet) {
 			args := iArgs.(*argsMigrate)
 
