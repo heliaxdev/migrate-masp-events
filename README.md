@@ -1,7 +1,7 @@
 # migrate-masp-events
 
 Tool developed to migrate MASP events on full or validator nodes
-produced by Namada [`v1.1.x`](https://github.com/anoma/namada/releases/tag/v1.1.5).
+produced by Namada [`v1.1.x`](https://github.com/anoma/namada/releases/tag/v1.1.5) to [`v101.0.0`](https://github.com/anoma/namada/releases/tag/v101.0.0).
 Events should be migrated by node operators who intend to serve
 MASP related data from their RPC servers (e.g. to be consumed by
 MASP indexers).
@@ -12,9 +12,15 @@ Simply run `make`. You will need recent Go and Rust toolchains
 available in your `PATH`. The resulting binary is `migrate-masp-events`.
 
 ## Usage
+```
+$ ./migrate-masp-events -h
+Usage of ./migrate-masp-events:
 
-    $ migrate-masp-events -h
-    $ migrate-masp-events <subcmd> -h
+  ./migrate-masp-events last-state      print last block state in the blockstore db of cometbft
+  ./migrate-masp-events migrate         migrate old masp events (<= namada v1.1.5) in the state db of cometbft
+  ./migrate-masp-events print-blocks    print all data in the blockstore db of cometbft
+  ./migrate-masp-events print-events    print all end blocks events in the state db of cometbft
+```
 
 ## Migration instructions
 
@@ -28,7 +34,7 @@ important, as the migrations require access to historical tx data.
     - In practice, only the `state.db` needs to be backed up,
       but there is no harm in creating a backup of the entire
       directory structure
-3. Locate a MASP indexer webserver that is still running `v1.2.0`
+3. Locate a MASP indexer webserver that is still running `v1.2.0` or `v1.2.1`
     - Its http endpoint will look something like <https://masp.indexer/api/v1>
 4. Run the events migration software
     ```
