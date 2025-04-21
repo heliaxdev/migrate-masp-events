@@ -1,10 +1,10 @@
 # migrate-masp-events
 
-Tool developed to migrate MASP events produced by a Namada node
-on version [`v1.1.4`](https://github.com/anoma/namada/releases/tag/v1.1.4)
-to the event format produced by a node on the next release. Events should be
-migrated by node operators who intend to expose their RPC servers to
-MASP indexers.
+Tool developed to migrate MASP events on full or validator nodes
+produced by Namada [`v1.1.x`](https://github.com/anoma/namada/releases/tag/v1.1.5).
+Events should be migrated by node operators who intend to serve
+MASP related data from their RPC servers (e.g. to be consumed by
+MASP indexers).
 
 ## Build instructions
 
@@ -22,7 +22,7 @@ First and foremost, **make sure you are not running the migrations
 from a pruned CometBFT node** (such as a state synced node). This is
 important, as the migrations require access to historical tx data.
 
-1. Ensure the Namada node on version `v1.1.4` that is going to
+1. Ensure the Namada node on version `v1.1.x` that is going to
    be migrated is not running
 2. Create a backup of the CometBFT `data` directory
     - In practice, only the `state.db` needs to be backed up,
@@ -34,6 +34,18 @@ important, as the migrations require access to historical tx data.
     ```
     $ migrate-masp-events migrate -cometbft-homedir path/to/cometbft/home -masp-indexer https://masp.indexer/api/v1
     ```
+
+### Optimization
+
+- **Start height:** If you happen to know a block height just before
+the first MASP transaction (e.g. block 1031830 on mainnet), you might
+be able to speed up the migration a bit. Pass the flag `-start <height>`
+to the migration command from step 4 above.
+- **Concurrent connections:** The flag `-max-concurrent-requests` controls
+the number of maximum concurrent connections kept alive while fetching data
+from the MASP indexer. A higher number of connections results in faster
+migration speeds, but be careful with idle connections timing out (see
+the troubleshooting section below).
 
 ### Troubleshooting
 
