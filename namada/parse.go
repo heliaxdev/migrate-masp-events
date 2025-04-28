@@ -4,14 +4,15 @@ package namada
 #cgo LDFLAGS: -Lparse/target/release -lparse
 
 #include <stddef.h>
+#include <stdint.h>
 
-extern char compute_masp_tx_id(
+extern int8_t compute_masp_tx_id(
 	void *result_ptr,
 	void *borsh_data_ptr,
 	size_t borsh_data_len
 );
 
-extern char locate_masp_tx_ids_in_nam_tx(
+extern int8_t locate_masp_tx_ids_in_nam_tx(
 	void *result_ptr,
 	void *nam_tx_borsh_data_ptr,
 	size_t nam_tx_borsh_data_len
@@ -31,7 +32,7 @@ type MaspTxSection struct {
 }
 
 //export append_masp_tx
-func append_masp_tx(mapHandle, maspTxId, sectionHash unsafe.Pointer, isIbc C.char) {
+func append_masp_tx(mapHandle, maspTxId, sectionHash unsafe.Pointer, isIbc C.int8_t) {
 	sections := cgo.Handle(mapHandle).Value().(map[[32]byte]MaspTxSection)
 
 	sections[*(*[32]byte)(maspTxId)] = MaspTxSection{
