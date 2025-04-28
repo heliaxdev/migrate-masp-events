@@ -1,7 +1,7 @@
 BIN     := migrate-masp-events
 RUSTLIB := libparse.a
 
-OS := $(uname -s)
+OS := $(shell uname -s)
 
 .PHONY: all
 all: $(BIN)
@@ -22,7 +22,7 @@ fmt:
 	go fmt github.com/heliaxdev/migrate-masp-events/proto/types
 
 $(BIN): $(RUSTLIB)
-ifeq ($(SPECIAL),"Linux")
+ifeq ($(OS),Linux)
 	env CGO_ENABLED=1 CGO_LDFLAGS=-lm go build
 else
 	env CGO_ENABLED=1 go build
