@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     clang-tools-14 \
     git \
+    ca-certificates \
     libssl-dev \
     pkg-config \
     protobuf-compiler \
