@@ -1,4 +1,4 @@
-FROM rust:1.85-slim as rust-build
+FROM rust:1.85-slim AS rust-build
 
 WORKDIR /app
 
@@ -6,7 +6,6 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     clang-tools-14 \
     git \
-    ca-certificates \
     libssl-dev \
     pkg-config \
     protobuf-compiler \
@@ -31,6 +30,9 @@ COPY . .
 RUN CGO_ENABLED=1 CGO_LDFLAGS=-lm go build
 
 FROM debian:bookworm-slim
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
 COPY --from=go-build /app/migrate-masp-events /app/migrate-masp-events
 
