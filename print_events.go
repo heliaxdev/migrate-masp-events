@@ -81,6 +81,8 @@ func printEndBlocksEvents(db *leveldb.DB, skipEmpty bool) error {
 	})
 
 	writer := bufio.NewWriter(os.Stdout)
+	defer writer.Flush()
+
 	encoder := json.NewEncoder(writer)
 
 	err := encoder.Encode(blockEvents)
