@@ -75,10 +75,11 @@ func (m *MaspIndexerClient) ValidateVersion(invalidCommitNotErr bool) error {
 		return err
 	}
 
-	if health.Commit != "38093aca7bc8cd3bb03ef06ce139fe4e672b20ff" {
+	if health.Commit != "38093aca7bc8cd3bb03ef06ce139fe4e672b20ff" &&
+		health.Commit != "6d6d022588a56f7c836e485de257e93646cd7847" {
 		if !invalidCommitNotErr {
 			return fmt.Errorf(
-				"using invalid commit %q, expected 38093aca7bc8cd3bb03ef06ce139fe4e672b20ff (1.2.0)",
+				"using invalid masp indexer commit %q, expected 38093ac (1.2.0) or 6d6d022 (1.2.1)",
 				health.Commit,
 			)
 		}
@@ -86,7 +87,7 @@ func (m *MaspIndexerClient) ValidateVersion(invalidCommitNotErr bool) error {
 			health.Commit = "<unknown-commit>"
 		}
 		log.Println(
-			"warning: masp indexer commit does not match release 1.2.0,",
+			"warning: masp indexer commit does not match release 1.2.0 or 1.2.1,",
 			m.maspIndexerApiV1,
 			"is using",
 			health.Commit,
