@@ -36,6 +36,7 @@ important, as the migrations require access to historical tx data.
       directory structure
 3. Locate a MASP indexer webserver that is still running `v1.2.0` or `v1.2.1`
     - Its http endpoint will look something like <https://masp.indexer/api/v1>
+    - Heliax is providing a public MASP indexer to be used for syncing: https://masp-indexer.heliax.work/
 4. Run the events migration software
     ```
     $ migrate-masp-events migrate -cometbft-homedir path/to/cometbft/home -masp-indexer https://masp.indexer/api/v1
